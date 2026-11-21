@@ -46,7 +46,7 @@ answers, or change some of them.
    ```
    The tool is now in the folder you created `path_of_your_choice/neuro-blender`.
 
-**Option B: without Git**
+**Option B: without Git** (but why would you do this to yourself)
 1. At the top of this page, click the green **Code** button, then **Download ZIP**.
 2. Extract the ZIP file into your `path_of_your_choice` folder.
 3. Rename the extracted folder from `neuro-blender-main` to `neuro-blender`.
