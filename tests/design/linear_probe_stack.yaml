@@ -1,0 +1,54 @@
+# Neuro Blender stack file.
+# The answers for the test design tests/design/linear_probe.dxf (made by make_linear_probe.py).
+
+format: 2
+design:
+  outline layer: OUTLINE
+  device number: 1
+  through holes: []
+layers:
+- name: Bottom PDMS
+  type: encapsulation
+  shape: OUTLINE
+  materials:
+  - {material: PDMS, thickness: 25 um, colour: '#cfe3ea'}
+  openings: []
+  cleave: true
+- name: Bottom PI
+  type: encapsulation
+  shape: OUTLINE
+  materials:
+  - {material: PI, thickness: 4 um, colour: '#d99a2b'}
+  openings: []
+  cleave: true
+- name: Tracks
+  type: tracks
+  shape: METAL
+  materials:
+  - {material: Ti, thickness: 10 nm, colour: '#8c857b'}
+  - {material: Au, thickness: 250 nm, colour: '#e3b04b'}
+  surface: shiny
+- name: Top PI
+  type: encapsulation
+  shape: OUTLINE
+  materials:
+  - {material: PI, thickness: 4 um, colour: '#d99a2b'}
+  openings: [OPENINGS_ELECTRODES, OPENINGS_PADS]
+  cleave: true
+- name: Top PDMS
+  type: encapsulation
+  shape: OUTLINE
+  materials:
+  - {material: PDMS, thickness: 25 um, colour: '#cfe3ea'}
+  openings: [OPENINGS_ELECTRODES, OPENINGS_PADS]
+  cleave: true
+- name: Electrode coating
+  type: electrode coating
+  shape: COATING
+  materials:
+  - {material: Pt, thickness: 200 nm, colour: '#c9c7c2'}
+  surface: shiny
+layers finished: true
+render:
+  electrode openings: [OPENINGS_ELECTRODES]
+  view: electrodes

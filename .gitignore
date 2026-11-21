@@ -1,0 +1,11 @@
+# Your designs and your results stay on your computer. They never go into the repo.
+my_designs/*
+docs/private/
+examples/*
+tests/reference/example_render.png
+!my_designs/.gitkeep
+projects/
+
+# Python cache files
+__pycache__/
+*.pyc
