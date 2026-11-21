@@ -83,7 +83,7 @@ conda activate neuro-blender
 python main.py
 ```
 
-`python main.py --terminal` asks the same questions in the terminal.
+To use the terminal (TUI) instead of the window (GUI), type `python main.py --terminal`.
 
 ### The first start
 
