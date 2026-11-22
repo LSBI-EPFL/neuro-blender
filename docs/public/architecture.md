@@ -27,7 +27,7 @@ Each step uses the results of the steps before it.
 | 1 File | `step1_read_mask.py` | Reads the mask file, finds its unit, names the mask layers. | `1_layer_overview.png` |
 | 2 Device | `step2_pick_device.py` | Selects the outline layer, the device and the through holes. | `2_device_numbers.png` |
 | 3 Stack | `step3_layer_questions.py` | Builds the layers of the device from the bottom up. | `4_stack.png` |
-| 4 Render | `step4_build_scene.py` | Makes the 3D values, the test views and the scene file, then runs Blender. | `5_view_choices.png`, `5_guide_choices.png`, `5_scene.json`, `5_render.png` |
+| 4 Render | `step4_build_scene.py` | Makes the 3D values, the test views and the scene file, then runs Blender. | `5_view_choices.png`, `5_view_angles.png`, `5_scene.json`, `5_render.png` |
 | 5 Labels | `step5_labels.py` | Puts the name and thickness of each layer on the render. | `6_exploded_view.png` |
 
 `ui.STEPS` is the only list of the steps. The results go into `projects/<name of the mask file>/`.
@@ -62,7 +62,7 @@ The back end raises three exceptions (in `backend/answers.py`):
 | Exception | Cause | Result |
 |---|---|---|
 | `GoBack` | Esc, or the Back button | The last question of this run comes again. `answers.HISTORY` holds the order. |
-| `GoToStep` | A click on a step (window), or F1 to F5 (terminal) | The answers of that step move to `answers.PREVIOUS` and become the default answers. |
+| `GoToStep` | A click on a step or "Change some answers" at the start (window, `flow.choose_step`), or F1 to F5 (terminal) | The answers of that step and of the later steps move to `answers.PREVIOUS` and become the default answers (`flow.asked_again`; the terminal keeps step 3 unless the target is step 3). |
 | `Stop` | A problem that ends the run | The front end shows the message. |
 
 A later step can open when it has saved answers. If the user stops during a change, `flow.keep_old_answers()` keeps

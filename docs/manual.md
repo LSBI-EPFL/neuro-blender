@@ -133,9 +133,10 @@ number of the answer and push Enter. Type `b` to return to the previous question
 ## Going to a step
 
 Click a step in the window (left), or push F1 to F5 in the terminal:
-- The questions of that step come again. Your old answers are the default answers: push Enter (or Next) to keep
-  an answer.
-- The later steps keep their answers. They ask only the questions that have no answer.
+- The questions of that step and of the later steps come again. Your old answers are the default answers: push
+  Enter (or Next) to keep an answer.
+- The terminal asks the layers of step 3 one at a time. So in the terminal, step 3 asks its questions again only
+  when you go to step 3.
 - Step 1 (File) goes to the start: the question about your saved answers.
 - A later step is possible when it has saved answers: the steps before it keep their answers.
 - In the window, this is also possible at the start (the question about your saved answers) and at the end: then a
@@ -233,17 +234,16 @@ Rules for the stack:
    | 2 Front, high | You look down on the device. You see the openings and the top layer. |
    | 3 Side | You look from the side. The cleave shows as a V shape. |
    | 4 From the tip | The tip points to you. You see the electrodes from the front. |
-   | 5 My own angles | You type 2 angles in degrees. Turn: 0 = from the side, 90 = from the tip, 180 = from the other side. Height: 0 = eye level, 90 = from directly above. |
+   | 5 My own angles | You type 2 angles in degrees. Turn: 0 = from the side, 90 = from the tip, 180 = from the other side. Height: 0 = eye level, 90 = from directly above. The image `5_view_angles.png` shows the 4 test views again, with their angles under them, as a reference. |
 
-7. Select the dashed lines (only for a stack with an electrode coating). A dashed line goes from each electrode,
-   through its opening, to its coating. The tool first renders a small test image for each choice, from your view.
-   The image `5_guide_choices.png` shows them:
+7. Dashed lines from the electrodes to the coatings? (Only for a stack with an electrode coating.) A dashed line
+   goes from an electrode, through its opening, to its coating. Select one option:
 
-   | Choice | What you see |
+   | Option | Result |
    |---|---|
-   | All the dashed lines | One line for each electrode. Clear for a device with few electrodes. |
-   | Some dashed lines | Lines on 6 electrodes only, spread over the device (only for more than 6 electrodes). Clear for a device with many electrodes. This is the default for more than 6 electrodes. |
-   | No dashed lines | Only the device and the coatings. |
+   | No dashed lines | No lines. |
+   | 6 dashed lines | Lines on 6 electrodes, spread over the device. Only for more than 6 electrodes. |
+   | All the dashed lines | A line for each electrode. Many lines can hide the device. |
 
 8. Show the labels? No = an image with no text.
 9. Select the image quality: `preview` (1280 × 720 pixels) or `final` (2560 × 1440 pixels).
@@ -264,14 +264,16 @@ border.
 
 ## Next run with the same mask file
 
-The tool saves your answers. At the next run with the same mask file, a list shows 3 choices (in the window: 2
-choices; click a step to change its answers):
+The tool saves your answers. At the next run with the same mask file, a list shows 3 choices:
 
 | Choice | Result |
 |---|---|
 | Render again with saved answers | The tool asks only for the image quality. |
-| Change one part: device, stack or view | The tool asks only the questions of that part. Your old answers are the default answers: push Enter (or Next) to keep an answer. For the stack, select one layer, "New layer on top" or "Full stack again". |
+| Change some answers (window) | Select a step: Device, Stack or Render. The questions of that step and of the later steps come again (see "Going to a step"). A click on a step (left) does the same. |
+| Change one part: device, stack or view (terminal) | The tool asks only the questions of that part. For the stack, select one layer, "New layer on top" or "Full stack again". |
 | Start new answers | The tool asks all the questions again. It keeps a copy of the old answers. |
+
+When you change answers, your old answers are the default answers: push Enter (or Next) to keep an answer.
 
 ## Results
 
@@ -283,7 +285,7 @@ The tool puts all the results in the folder `projects/<name of your mask file>/`
 | `5_render.png` | The render without labels, on a transparent background. |
 | `5_render.blend` | The Blender scene. Open it in Blender to change the camera, a colour or the light by hand. |
 | `5_view_choices.png` | The 4 test views of step 4. |
-| `5_guide_choices.png` | The test images of the dashed lines (step 4). |
+| `5_view_angles.png` | The 4 test views with their angles (only after "My own angles"). |
 | `4_stack.png` | A drawing of the stack. The heights are not to scale. |
 | `3_device_layers/` | One image of each mask layer of your device. |
 | `2_device_numbers.png` | The number of each device (only for a mask file with more than one device). |
@@ -399,7 +401,7 @@ The values that control the look are at the top of these files:
 | File | Value | Controls |
 |---|---|---|
 | `backend/step4_build_scene.py` | `LOOK` | Drawn thicknesses (and their limit for narrow features), the default cleave angle and space, gaps between the coatings, the radius of the rounded edges. |
-| `backend/step4_build_scene.py` | `SOME_GUIDES` | The number of dashed lines for the choice "Some dashed lines" (6). |
+| `backend/step4_build_scene.py` | `SOME_GUIDES` | The number of electrodes in the middle dashed-line option (6). |
 | `frontends/theme.py` | `RED`, `GROSEILLE`, `LEMAN`, `PERLE` and the greys | The colours of the window and the terminal (the colours of the EPFL graphic charter). |
 | `backend/step4_build_scene.py` | `VIEWS` | The camera angles of the 4 views. |
 | `backend/blender_render.py` | `LENS` | The camera lens. |

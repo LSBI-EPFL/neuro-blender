@@ -121,8 +121,8 @@ def run(scene, image_file, project_folder):
     for p, y in zip(anchors, heights):
         label = label_of[p["index"]]
         ax.plot([p["xy"][0], elbow_x, text_x - 0.03 * column], [p["xy"][1], p["xy"][1], y],
-                color=LINE_COLOUR, linewidth=0.0007 * w)
-        ax.plot(*p["xy"], "o", color=LINE_COLOUR, markersize=0.002 * w)
+                color=LINE_COLOUR, linewidth=0.0014 * w)
+        ax.plot(*p["xy"], "o", color=LINE_COLOUR, markersize=0.003 * w)   # the dot stays larger than the line
         ax.text(text_x, y, label["name"], color=TEXT_COLOUR, fontsize=size, fontweight="bold", va="bottom")
         ax.text(text_x, y, label["text"], color=NOTE_COLOUR, fontsize=0.85 * size, va="top")
 

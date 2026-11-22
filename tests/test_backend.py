@@ -510,6 +510,78 @@ with tempfile.TemporaryDirectory() as temp:
 s4.run_blender = saved_run_blender
 image_cache.clear()
 
+
+# ── the view question: the angles of the test views show only after "My own angles" ──
+class ViewFront:
+    def __init__(self, choice):
+        self.choice, self.paths = choice, []
+
+    def ask_choice(self, question, help_text, options, default, details, side):
+        return self.choice
+
+    def ask_text(self, question, help_text, default, check_function):
+        return "45" if question.startswith("Turn") else "13"
+
+    def show_path(self, text, path, *args, **kwargs):
+        self.paths.append(os.path.basename(path))
+
+    def note(self, *args, **kwargs):
+        pass
+
+
+def fake_choices(blender, scene, test_scene, tests, choices_file, *args, **kwargs):
+    for test in tests:
+        plt.imsave(test["file"], [[0.5, 0.8]])
+
+
+saved_render_choices, s4.render_choices = s4.render_choices, fake_choices
+answers.PREVIOUS.clear()
+for choice, expected_angles, expected_file in (("5", (45, 13), True), ("2", (32, 35), False)):
+    with tempfile.TemporaryDirectory() as temp:
+        view_front = ViewFront(choice)
+        ui.use(view_front)
+        result = s4.ask_view({}, "blender", temp)
+        check(f"view question: choice {choice} gives {expected_angles}; the image with the angles "
+              f"{'shows' if expected_file else 'does not show'}",
+              result == expected_angles and ("5_view_angles.png" in view_front.paths) == expected_file
+              and os.path.exists(os.path.join(temp, "5_view_angles.png")) == expected_file)
+s4.render_choices = saved_render_choices
+
+
+# ── the dashed lines: one choice (none, 6, all), no test images ──
+class GuideFront:
+    def ask_choice(self, question, help_text, options, default, details, side):
+        self.options, self.default = list(options), default
+        return default
+
+
+guide_results = []
+for count, old, expected_options, expected_default in ((8, None, ["none", "some", "all"], "some"),
+                                                       (3, None, ["none", "all"], "all"),
+                                                       (8, "none", ["none", "some", "all"], "none"),
+                                                       (3, "some", ["none", "all"], "all")):
+    guide_front = GuideFront()
+    ui.use(guide_front)
+    answers.PREVIOUS.clear()
+    if old:
+        answers.PREVIOUS["render guide lines"] = old
+    result = s4.ask_guides({"guides": {"centres": [(0, 0)] * count}})
+    guide_results.append(guide_front.options == expected_options and result == expected_default)
+answers.PREVIOUS.clear()
+check("dashed lines: none, 6 or all (no '6' with 6 electrodes or fewer); the old answer is the default",
+      all(guide_results))
+
+# ── thin strips: an opening that ends a little inside the outline leaves a strip that cannot have round edges ──
+strip = box(0, 0, 10, 10).union(box(10, 4.99, 14, 5.01))           # a square with a strip of 0.02 on its side
+cleaned = s4.without_slivers([strip], 0.1)
+check("thin strips: a strip narrower than two radii goes, the layer stays",
+      len(cleaned) == 1 and abs(cleaned[0].area - 100) < 1e-6)
+bridge = box(0, 0, 10, 10).difference(box(2, 2, 4.9, 8)).difference(box(5.1, 2, 8, 8))   # two openings, 0.2 apart
+check("thin strips: a bridge of 0.2 between two openings stays (radius 0.09)",
+      abs(s4.without_slivers([bridge], 0.09)[0].area - bridge.area) < 1e-6)
+check("rounded edges: a bridge between two openings narrower than two radii makes the radius smaller",
+      s4.edge_radius([bridge], 1.0) < 0.1)
+
 # ── the shared checks of backend/ui.py, with a fake front end ──
 class FakeFront:
     """A front end that gives prepared answers and keeps the check functions of the questions."""
@@ -650,20 +722,25 @@ check("change one part: 'view' removes all the render answers (from the table, n
       and all(k in answers.PREVIOUS for k in view_keys))
 answers.PREVIOUS.clear()
 
-# Going to a step: from "Image quality?" (step 4) to step 2. The questions of step 2 come again with the old
-# answers as defaults; steps 3 and 4 keep their answers and ask nothing.
+# Going to a step: from "Image quality?" (step 4) to step 2. The questions of step 2 and of the later steps come
+# again with the old answers as defaults. The terminal has no forms: step 3 keeps its answers (no layer question).
 yaml.safe_dump(data, open(stack_file, "w", encoding="utf8"), sort_keys=False)    # a fresh answers file
 front = ScriptedFront([("This design has saved answers", "render"), ("Image quality?", "GOTO 2"),
                        ("Image quality?", "STOP")])
 ui.use(front)
+saved_render_choices, step4_build_scene.render_choices = step4_build_scene.render_choices, lambda *a, **k: None
 try:
-    flow.run(mask)
+    flow.run(mask)                                           # (no test images: render_choices does nothing)
 except StopTest:
     pass
+step4_build_scene.render_choices = saved_render_choices
 questions = [q for q, _ in front.asked]
 outline = [default for q, default in front.asked if q.startswith("Which mask layer draws the device outline")]
 check("going to a step: step 2 asks its questions again, with the old answer as default", outline == ["OUTLINE"])
-check("going to a step: the steps after it keep their answers (no layer question)", "Name?" not in questions)
+check("going to a step: in the terminal, step 3 keeps its answers (no layer question)", "Name?" not in questions)
+check("going to a step: the later step 4 asks its questions again (view, dashed lines, labels)",
+      "From which view do you want to see the device?" in questions
+      and "Dashed lines from the electrodes to the coatings?" in questions and "Show labels?" in questions)
 check("going to a step: then the tool goes on to the next open question", questions[-1] == "Image quality?")
 
 # One way to move. A later step with answers: from step 2 straight to step 4 (step 2 keeps its answers).
@@ -708,19 +785,70 @@ class FormScript(ScriptedFront):
         return {q.key: values.get(q.key, q.initial(values)) for q in questions}
 
 
-# The window: a click on step 3 at the start opens the stack form with the saved answers; no "change one part".
+# The window: a click on step 3 at the start opens the stack form with the saved answers.
+# Then the questions of step 4 come again (old answers = defaults): the page form, the view, the dashed lines.
 yaml.safe_dump(data, open(stack_file, "w", encoding="utf8"), sort_keys=False)
 front = FormScript([("This design has saved answers", "GOTO 3"), ("Image quality?", "STOP")])
 ui.use(front)
+step4_build_scene.render_choices = lambda *a, **k: None
 try:
     flow.run(mask)
 except StopTest:
     pass
-check("one way to move: the window start menu has no 'change one part'; it knows the steps with answers",
-      "change" not in front.menus[0] and [1, 2, 3, 4] in front.answered)
+step4_build_scene.render_choices = saved_render_choices
+questions = [q for q, _ in front.asked]
+check("window start menu: it has 'Change some answers'; it knows the steps with answers",
+      "change" in front.menus[0] and [1, 2, 3, 4] in front.answered)
 check("one way to move: a click on step 3 at the start opens the stack form; the answers stay the same",
-      front.forms == ["stack"] and answers.read_stack(stack_file).get("layer 4 openings") ==
+      front.forms[:1] == ["stack"] and answers.read_stack(stack_file).get("layer 4 openings") ==
       "OPENINGS_ELECTRODES, OPENINGS_PADS")
+check("one way to move: after the stack form, step 4 asks again (page form, view, dashed lines)",
+      front.forms == ["stack", "page"] and "From which view do you want to see the device?" in questions
+      and "Dashed lines from the electrodes to the coatings?" in questions)
+check("one way to move: the old view answer is the default of the view question",
+      [d for q, d in front.asked if q.startswith("From which view")] == ["1"])
+
+# The window: "Change some answers", then step 3: the same as a click on step 3. Back from "Which step?": the menu.
+yaml.safe_dump(data, open(stack_file, "w", encoding="utf8"), sort_keys=False)
+front = FormScript([("This design has saved answers", "change"), ("Which step do you want", "BACK"),
+                    ("This design has saved answers", "change"), ("Which step do you want", "3"),
+                    ("Image quality?", "STOP")])
+ui.use(front)
+step4_build_scene.render_choices = lambda *a, **k: None
+try:
+    flow.run(mask)
+except StopTest:
+    pass
+step4_build_scene.render_choices = saved_render_choices
+questions = [q for q, _ in front.asked]
+check("window 'Change some answers': Back from 'Which step?' shows the menu again; the steps 2, 3, 4 are options",
+      questions[:3] == ["This design has saved answers. What do you want to do?", "Which step do you want to change?",
+                        "This design has saved answers. What do you want to do?"]
+      and front.menus[1] == ["2", "3", "4"])
+check("window 'Change some answers', step 3: stack form, then all the step 4 questions; the answers stay the same",
+      front.forms == ["stack", "page"] and "Dashed lines from the electrodes to the coatings?" in questions
+      and answers.read_stack(stack_file).get("layer 4 openings") == "OPENINGS_ELECTRODES, OPENINGS_PADS")
+
+# The window: a click on step 3 at "Image quality?" (the user selected "Render again"), Next on the stack form:
+# the questions of step 4 come again, not straight the render.
+yaml.safe_dump(data, open(stack_file, "w", encoding="utf8"), sort_keys=False)
+front = FormScript([("This design has saved answers", "render"), ("Image quality?", "GOTO 3"),
+                    ("Image quality?", "STOP")])
+ui.use(front)
+step4_build_scene.render_choices = lambda *a, **k: None
+try:
+    flow.run(mask)
+except StopTest:
+    pass
+step4_build_scene.render_choices = saved_render_choices
+questions = [q for q, _ in front.asked]
+check("go to step 3 from 'Image quality?': stack form, then all the step 4 questions, then 'Image quality?'",
+      front.forms == ["stack", "page"] and questions[-4:] == [
+          "From which view do you want to see the device?",
+          "Dashed lines from the electrodes to the coatings?", "Show labels?", "Image quality?"])
+check("go to step 3: the answers of step 4 stay the same when the user keeps the defaults",
+      answers.read_stack(stack_file).get("render camera turn and height") == "32, 11"
+      and answers.read_stack(stack_file).get("render guide lines") == "all")
 
 # A stop during a change (the window closes, Ctrl+C): the answers that "change one part" removed stay in the file.
 yaml.safe_dump(data, open(stack_file, "w", encoding="utf8"), sort_keys=False)

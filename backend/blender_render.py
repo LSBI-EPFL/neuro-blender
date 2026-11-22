@@ -201,12 +201,15 @@ def finish(name, bm, material):
 
 
 def join_flat_faces(bm):
-    """Join the triangles of each flat face into one large face, and remove the points in the middle of straight
-    edges. Do this before the bevel: the bevel cannot be larger than the short edges next to it, and the
-    triangles of a curved outline have very short edges."""
+    """Make good faces for the bevel. First join the triangles of each flat face and remove the points in the middle
+    of straight edges (the triangles of the first fill are long and thin). Then split the joined faces again into
+    well-shaped triangles. A large joined face with many openings keeps edges from its openings to its outer line at
+    very small angles: the bevel slid along these edges and made long spikes through the layer (seen on layers with
+    many openings)."""
     bmesh.ops.remove_doubles(bm, verts=bm.verts[:], dist=MERGE)
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
     bmesh.ops.dissolve_limit(bm, angle_limit=math.radians(1), verts=bm.verts[:], edges=bm.edges[:])
+    bmesh.ops.triangulate(bm, faces=bm.faces[:], quad_method="BEAUTY", ngon_method="BEAUTY")
     bm.normal_update()
 
 
@@ -290,7 +293,9 @@ def round_edges(obj, radius):
     bevels never cross. ("Clamp overlap" is off: Blender calculates its limit one time for the full object, and one
     short edge makes all the edges sharp.)
     The faces have a flat shading, and the bevel has 10 steps, so that the round edge looks smooth. (Smooth shading
-    gave dark areas on the large bent faces of a layer with many openings.)"""
+    gave dark areas on the large bent faces of a layer with many openings.)
+    "Loop slide" is off: the bevel keeps an even width and does not slide along the edges of the flat faces (a
+    slide along an edge at a small angle made spikes)."""
     if radius <= 0:
         return
     bevel = obj.modifiers.new("Round edges", "BEVEL")
@@ -298,6 +303,7 @@ def round_edges(obj, radius):
     bevel.segments = 10
     bevel.limit_method = "WEIGHT"                   # the radius of each edge = width x its weight
     bevel.use_clamp_overlap = False
+    bevel.loop_slide = False
     bevel.harden_normals = False
 
 
@@ -504,21 +510,6 @@ def render_views(made):
         say("saved view", file=view["file"])
 
 
-def render_guide_choices(made, bends):
-    """Render one small test image for each choice of guide lines in S["guide_choices"] (all, some, none), from
-    the camera of the user (for the guide line question of step 4)."""
-    render_settings()
-    cam, centre, size = place_camera(list(made.values()), S["camera"]["turn"], S["camera"]["height"])
-    add_studio(centre, size, S["camera"]["turn"])
-    for choice in S["guide_choices"]:
-        guides = add_guides(bends, choice["centres"]) if choice["centres"] else None
-        bpy.context.scene.render.filepath = choice["file"]
-        bpy.ops.render.render(write_still=True)
-        say("saved view", file=choice["file"])
-        if guides is not None:
-            bpy.data.objects.remove(guides, do_unlink=True)
-
-
 def main():
     for collection in (bpy.data.objects, bpy.data.meshes, bpy.data.materials, bpy.data.lights,
                        bpy.data.cameras, bpy.data.worlds):
@@ -527,9 +518,6 @@ def main():
     made, bends = build_device()
     if "views" in S:
         render_views(made)
-        return
-    if "guide_choices" in S:
-        render_guide_choices(made, bends)
         return
     cam, centre, size = place_camera(list(made.values()), S["camera"]["turn"], S["camera"]["height"])
     add_studio(centre, size, S["camera"]["turn"])

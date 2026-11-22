@@ -315,15 +315,31 @@ def edge_radius(polygons, thickness):
     if not radius > 0 or radius == float("inf"):          # sharp edges, or nothing to measure
         return 0.0
     # A narrow neck in a wide shape: 2 x area / perimeter does not see it. Shrink each shape by the radius: if it
-    # breaks into more parts or disappears, a neck is narrower than two radii, and the bevels would cross. Then
-    # halve the radius (at most 6 times).
+    # breaks into more parts, disappears, or two of its openings join (a narrow bridge between two openings, or
+    # between an opening and the edge), a neck is narrower than two radii, and the bevels would cross. Then halve
+    # the radius (at most 6 times).
+    holes = lambda g: sum(len(q.interiors) for q in parts(g))
     for p in main:
         for _ in range(6):
             inner = p.buffer(-1.05 * radius)
-            if not inner.is_empty and len(parts(inner)) <= len(parts(p)):
+            if not inner.is_empty and len(parts(inner)) <= len(parts(p)) and holes(inner) >= holes(p):
                 break
             radius /= 2
     return radius
+
+
+def without_slivers(polygons, radius):
+    """Remove the parts of a layer that are narrower than its two rounded edges (2 x radius): they cannot have
+    rounded edges, and the bevel of Blender makes broken shapes on them. Example: an opening that ends a little
+    inside the device outline (two mask layers at a very small angle) leaves a thin strip along the edge.
+    edge_radius() makes the radius small enough for the real necks and bridges, so only thin strips and spikes go."""
+    if radius <= 0:
+        return polygons
+    out = []
+    for p in polygons:
+        kept = p.buffer(-radius, join_style=2).buffer(radius, join_style=2).intersection(p)
+        out += [q for q in parts(kept) if 2 * q.area / q.length > 0.5 * radius]   # no thin rest of the cut
+    return out
 
 
 def bend_groups(layers):
@@ -439,6 +455,9 @@ def build_scene(device_layers, layers, stack, view, enlarge, cleave_angle, space
             polygons = enlarged(polygons, add_metal_rim=True)
         polygons = [q for p in polygons for q in parts(p.difference(through_holes))]   # holes through all layers
         in_view = [q for p in polygons for q in parts(p.intersection(crop))]
+        radius = max(edge_radius(in_view, drawn[id(m)]) for m in layer["materials"])
+        if layer["type"] == "encapsulation":              # thin strips left by the openings go (see without_slivers)
+            in_view = without_slivers(in_view, radius)
         polygons = to_json(in_view, simplify, decimals)
         # Label points: only on the main shapes of the layer (at least 10 % of the area of the largest shape),
         # so that a label line never points at a small mark or a text of the layer.
@@ -448,7 +467,6 @@ def build_scene(device_layers, layers, stack, view, enlarge, cleave_angle, space
         step = max(1, len(outline_points) // 400)
         label_points = [[round(x, decimals), round(y, decimals)] for x, y in outline_points[::step]]
         # The same points a little inside the edge, on the flat top face: the rounded edge is not at the outline.
-        radius = max(edge_radius(in_view, drawn[id(m)]) for m in layer["materials"])
         inset_points = [pt for q in main for r in parts(q.buffer(-1.5 * radius)) for pt in r.exterior.coords[:-1]]
         step = max(1, len(inset_points) // 400)
         label_inset = [[round(x, decimals), round(y, decimals)] for x, y in inset_points[::step]]
@@ -457,7 +475,7 @@ def build_scene(device_layers, layers, stack, view, enlarge, cleave_angle, space
             objects.append(dict(index=len(objects), layer=i, name=f"{layer['name']} - {m['name']}", kind=layer["type"],
                                 z0=z, z1=z + drawn[id(m)], polygons=polygons, label_points=label_points,
                                 label_inset=label_inset,
-                                round=edge_radius(in_view, drawn[id(m)])))
+                                round=min(edge_radius(in_view, drawn[id(m)]), radius)))
             z += drawn[id(m)]
         if layer["type"] == "tracks":
             tracks_z0 = objects[first]["z0"] if tracks_z0 is None else tracks_z0
@@ -565,8 +583,9 @@ VIEWS = [
 ]
 
 
-def save_view_choices(views, file):
+def save_view_choices(views, file, angles=False):
     """Put the small test images into one image, each with its number, name and meaning.
+    angles=True: the 2 angles of each view under its image (a reference for "My own angles").
     4 images: 2 rows of 2. Fewer images: one column (it fits the tall image panel of the window)."""
     columns = 2 if len(views) == 4 else 1
     rows = math.ceil(len(views) / columns)
@@ -574,6 +593,9 @@ def save_view_choices(views, file):
     for number, (view, ax) in enumerate(zip(views, axes.flat), start=1):
         ax.imshow(mpimg.imread(view["file"]))
         ax.set_title(f"{number}   {view['name']}", fontsize=13, fontweight="bold", loc="left")
+        if angles:
+            ax.text(0.5, -0.02, f"turn {view['turn']}°, height {view['height']}°", transform=ax.transAxes,
+                    fontsize=13, ha="center", va="top", color="0.25")
         ax.text(0, 1.0, view["meaning"], transform=ax.transAxes, fontsize=9, va="top", color="0.35")
         ax.axis("off")
     fig.patch.set_facecolor("white")
@@ -610,7 +632,7 @@ def whole_number_check(lowest, highest):
 
 
 
-GUIDE_CHOICES = {"all": "All the dashed lines", "some": "Some dashed lines", "none": "No dashed lines"}
+GUIDE_CHOICES = ("none", "some", "all")
 SOME_GUIDES = 6          # "some" = the dashed lines of 6 electrodes, spread over the device
 
 
@@ -624,33 +646,23 @@ def guide_centres(centres, choice):
     return [order[round(i * (len(order) - 1) / (SOME_GUIDES - 1))] for i in range(SOME_GUIDES)]
 
 
-def ask_guides(scene, blender, project_folder, scene_key=None):
-    """Make a small test image for each choice of dashed lines (from the camera of the user), then ask the user to
-    select one. The dashed lines go from each electrode, through its opening, to its coating. With many
-    electrodes, all the lines can hide the device: then "some" is the default."""
-    centres = scene["guides"]["centres"]
-    choices = ["all", "some", "none"] if len(centres) > SOME_GUIDES else ["all", "none"]
-    meanings = {"all": f"Dashed line from each of {len(centres)} electrodes to its coating.",
-                "some": f"Dashed lines on {SOME_GUIDES} of {len(centres)} electrodes, spread over device.",
-                "none": "No dashed lines. Only device and coatings."}
-    folder = os.path.join(project_folder, "5_views")
-    os.makedirs(folder, exist_ok=True)
-    tests = [dict(name=GUIDE_CHOICES[c], meaning=meanings[c], centres=guide_centres(centres, c),
-                  file=os.path.join(folder, f"guides_{c}.png")) for c in choices]
-    choices_file = os.path.join(project_folder, "5_guide_choices.png")
-    test_scene = dict(scene, quality="views", guides=dict(scene["guides"], centres=[]),
-                      guide_choices=[dict(centres=t["centres"], file=t["file"]) for t in tests])
-    key = None if scene_key is None else (scene_key, json.dumps(scene.get("camera")), tuple(choices))
-    render_choices(blender, scene, test_scene, tests, choices_file, os.path.join(folder, "guides_scene.json"),
-                   what="Test images of dashed lines",
-                   note=f"Rendering test image for each dashed-line choice (about {10 * len(choices)} s) ...",
-                   cache=("dashed line images", key))
-    ui.show_path("Dashed lines, test images:", choices_file)
-    options = {c: f"{n}  {GUIDE_CHOICES[c]}" for n, c in enumerate(choices, start=1)}
+def ask_guides(scene):
+    """Ask how many dashed lines the image gets. A dashed line goes from an electrode, through its opening, to its
+    coating. The options: no lines, the lines of SOME_GUIDES electrodes (spread over the device), or all the lines.
+    With SOME_GUIDES electrodes or fewer, the middle option is not shown (it is the same as all).
+    Return "none", "some" or "all"."""
+    count = len(scene["guides"]["centres"])
+    options = {"none": "No dashed lines"}
+    if count > SOME_GUIDES:
+        options["some"] = f"{SOME_GUIDES} dashed lines"
+    options["all"] = f"All the dashed lines ({count})"
+    details = {"some": f"{SOME_GUIDES} of the {count} electrodes, spread over the device.",
+               "all": "Many lines can hide the device."}
     old = answers.PREVIOUS.get("render guide lines")
-    default = old if old in choices else ("some" if "some" in choices else "all")
-    return ui.ask_choice("Which dashed lines do you want?", "lines from electrodes to coatings",
-                         options, default=default, details=meanings)
+    default = old if old in options else ("some" if "some" in options else "all")
+    return ui.ask_choice("Dashed lines from the electrodes to the coatings?",
+                         "A line goes from an electrode, through its opening, to its coating.",
+                         options, default=default, details={k: v for k, v in details.items() if k in options})
 
 
 def ask_view(scene, blender, project_folder, scene_key=None):
@@ -680,6 +692,10 @@ def ask_view(scene, blender, project_folder, scene_key=None):
     if choice != "5":
         view = VIEWS[int(choice) - 1]
         return view["turn"], view["height"]
+    # My own angles: the same test images, now with the angles of each view under it (no new render).
+    angles_file = os.path.join(project_folder, "5_view_angles.png")
+    save_view_choices(views, angles_file, angles=True)
+    ui.show_path("4 test views with their angles:", angles_file)
     turn = int(ui.ask("Turn around the device, in degrees (-180 to 180)?",
                       "0 = from side, tip on right. 90 = from tip. 180 = from other side",
                       old[0], whole_number_check(-180, 180)))
@@ -787,8 +803,7 @@ def run(device_layers, layers, stack, project_folder, projects_folder):
 
     # Two options for the image: the dashed guide lines (only with a coating) and the labels.
     if scene["coatings"] and scene["guides"]["centres"]:
-        guides = answer(stack, "render guide lines", lambda: ask_guides(scene, blender, project_folder, key),
-                        is_valid=lambda v: v in GUIDE_CHOICES)
+        guides = answer(stack, "render guide lines", lambda: ask_guides(scene), is_valid=lambda v: v in GUIDE_CHOICES)
         scene["guides"]["centres"] = guide_centres(scene["guides"]["centres"], guides)
     scene["show labels"] = answer(stack, "render labels", lambda: ui.ask_yes_no(
         "Show labels?", "Labels give name and real thickness of each layer. No = image with no text.",

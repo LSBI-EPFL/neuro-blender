@@ -2,13 +2,16 @@
 The order of the work. Both front ends (the window and the terminal) run it with flow.run().
 
   1. Select the mask file (DXF or GDS): a file in my_designs, or a window to find it.
-  2. If saved answers exist for this design: render again, change one part, or start new answers.
+  2. If saved answers exist for this design: render again, change answers, or start new answers.
   3. Do the 5 steps, in order.
 
 Going to a step (a click on the step list of the window, or F1 to F5 in the terminal): the questions of that step
-come again, with the old answers as default answers. Step 1 (File) = the start. A later step is possible when it has
-saved answers: the steps before it keep their answers. In the window, a click on a step is the one way to change
-answers (also at the start and at the end); the terminal also has "change one part".
+and of the steps after it come again, with the old answers as default answers. Step 1 (File) = the start. A later
+step is possible when it has saved answers: the steps before it keep their answers. In the window, a click on a step
+changes answers (also at the start and at the end); "Change some answers" at the start does the same for the selected
+step. The terminal has "change one part" (one part, or one layer of the stack).
+(The terminal has no forms: it asks the layers of step 3 one at a time. So in the terminal, step 3 asks its
+questions again only when the user goes to step 3.)
 
 Going back (Esc, or the Back button of the window) works the same in both front ends:
   - in the steps: back to the last question that the user answered in this run, also in an earlier step.
@@ -150,6 +153,20 @@ def change_one_part(stack):
     return stack
 
 
+def choose_step(stack):
+    """The window: select the step to change. Return its number. The result is the same as a click on that step:
+    the questions of that step and of the later steps come again, with the old answers as default answers."""
+    steps = [n for n in answered_steps(stack) if n in (2, 3, 4)]
+    details = {2: "Outline layer, device number, through holes.",
+               3: "The stack form: all layers.",
+               4: "Part of device, cleave angle, layer spacing, coating distance, camera, dashed lines, labels."}
+    choice = ui.ask_choice("Which step do you want to change?", "Old answers are the default answers.",
+                           {str(n): f"{n} {ui.STEPS[n - 1][0]}" for n in steps},
+                           default="3" if 3 in steps else str(steps[0]),
+                           details={str(n): details[n] for n in steps})
+    return int(choice)
+
+
 def answered_steps(stack):
     """The steps that have saved answers (step 1 = the start: always)."""
     return sorted({1} | {step_of(key) for key in stack if step_of(key)})
@@ -159,26 +176,33 @@ def load_or_start_stack(stack_file, mask_file):
     """Return the saved answers to use (a dictionary), and True if the user answered a question here.
     The old answers are never deleted.
 
-    - Saved answers for this design exist: a short menu. Render again, change one part, or start new answers.
+    - Saved answers for this design exist: a short menu. Render again, change answers, or start new answers.
     - Else, a file "<mask file name>_stack.yaml" next to the mask file exists: the tool can start from it.
     """
     while os.path.exists(stack_file):
         options = {"render": "Render again with saved answers",
                    "change": "Change one part: device, stack or view",
                    "new": "Start new answers"}
-        if ui.shows_forms():                              # the window: a click on a step changes its answers
-            del options["change"]
-            ui.steps_with_answers(answered_steps(answers.read_stack(stack_file)))
-            ui.note("To change answers: click a step.")
+        details = {"render": "Asks only for image quality.",
+                   "change": "Asks only the questions of the selected part.",
+                   "new": "Asks all questions again. Keeps a copy of old answers."}
+        if ui.shows_forms():                              # the window: "change" = a click on the selected step
+            steps = answered_steps(answers.read_stack(stack_file))
+            ui.steps_with_answers(steps)
+            options["change"] = "Change some answers"
+            details["change"] = "Select a step. Its questions and the later questions come again."
+            if not set(steps) & {2, 3, 4}:
+                del options["change"]
+            ui.note("You can also click a step to change its answers.")
         choice = ui.ask_choice(
             "This design has saved answers. What do you want to do?", "", options, default="render",
-            details={"render": "Asks only for image quality.",
-                     "change": "Asks only the questions of the selected part.",
-                     "new": "Asks all questions again. Keeps a copy of old answers."})
+            details=details)
         if choice == "render":
             return answers.read_stack(stack_file), True
         if choice == "change":
             try:
+                if ui.shows_forms():
+                    raise answers.GoToStep(choose_step(answers.read_stack(stack_file)))
                 return change_one_part(answers.read_stack(stack_file)), True
             except answers.GoBack:                        # back from "Which part?": this menu again
                 answers.PREVIOUS.clear()
@@ -268,13 +292,22 @@ def keep_old_answers(stack, stack_file):
     answers.HISTORY.clear()
 
 
+def asked_again(key, target):
+    """True if a click on step `target` asks this answer again: the answers of that step and of the later steps.
+    In the terminal (no forms), the layers of step 3 come again only for a click on step 3."""
+    step = step_of(key)
+    if step == 3 and target != 3 and not ui.shows_forms():
+        return False
+    return step >= target
+
+
 def run_steps(mask_file, stack, stack_file, project_folder, go_to=None):
     """Do the 5 steps, in order. Each step uses the results of the steps before it. Return the final image.
-    go_to: a step whose questions come again at once (old answers = defaults); the steps before it keep their
-    answers."""
+    go_to: a step whose questions (and the questions of the steps after it) come again at once, old answers =
+    defaults; the steps before it keep their answers."""
     stack["dxf file"] = mask_file
     if go_to:
-        for key in [k for k in stack if step_of(k) == go_to]:
+        for key in [k for k in stack if asked_again(k, go_to)]:
             answers.PREVIOUS[key] = stack.pop(key)
     answers.SAVE = lambda values: answers.write_stack(stack_file, values)   # save after each answer
     results = {}
@@ -309,9 +342,9 @@ def run_steps(mask_file, stack, stack_file, project_folder, go_to=None):
                 # again with no question up to that step.
                 for key in [k for k in answers.PREVIOUS if 0 < step_of(k) < target]:
                     stack.setdefault(key, answers.PREVIOUS.pop(key))
-            # The answers of that step become the default answers, and its questions come again. The answers of
-            # the later steps stay: these steps ask only the questions that have no answer.
-            for key in [k for k in stack if step_of(k) == target]:
+            # The answers of that step and of the later steps become the default answers: their questions come
+            # again.
+            for key in [k for k in stack if asked_again(k, target)]:
                 answers.PREVIOUS[key] = stack.pop(key)
             answers.HISTORY[:] = [(step, key) for step, key in answers.HISTORY if step < target - 1]
             answers.write_stack(stack_file, stack)
