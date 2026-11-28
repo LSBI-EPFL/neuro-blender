@@ -155,6 +155,10 @@ def ask_choice(question, help_text, options, default=None, details=None, side=No
     return _ask("ask_choice", question, help_text, dict(options), default, details or {}, side or {})
 
 
+def ask_file(question, help_text, options, default=None, details=None, endings=(), browse=None):
+    return _ask("ask_file", question, help_text, dict(options), default, details or {}, tuple(endings), browse)
+
+
 def ask_yes_no(question, help_text="", default="y"):
     return _ask("ask_yes_no", question, help_text, default)
 
@@ -289,6 +293,47 @@ class App:
         self.icon = icon
         for key in ("Return", "Escape", "Up", "Down", "Left", "Right", "space", "y", "n"):
             root.bind(f"<{key}>", lambda event, k=key: self.key(k, event))
+        self.drop_endings = ()              # the file endings that the open question takes from a drop (ask_file)
+        self.drag_over = False              # a file is over the window now (drag): the drop box shows it in red
+        self.drop_box = None                # the drop box of the open file question (ask_file), or None
+        self.can_drop = self.allow_drops()
+
+    def allow_drops(self):
+        """Let the user drop files on the window (package tkinterdnd2). Return True if it works. With no
+        tkinterdnd2, the window works with no drop: the user selects the file in the list or in the file window."""
+        try:
+            from tkinterdnd2 import DND_FILES, TkinterDnD
+            TkinterDnD._require(self.root)
+            for part in self.root.winfo_children():         # the parts of the window: the root itself takes no drop
+                part.drop_target_register(DND_FILES)
+                part.dnd_bind("<<Drop>>", self.dropped)
+                part.dnd_bind("<<DropEnter>>", lambda event: self.drag(True, event))
+                part.dnd_bind("<<DropLeave>>", lambda event: self.drag(False, event))
+            return True
+        except Exception:
+            return False
+
+    def drag(self, over, event):
+        """A file comes over the window, or goes away from it: the drop box changes its colour."""
+        self.drag_over = over
+        if self.drop_box is not None and self.drop_box.winfo_exists():
+            self.drop_box.paint()
+        return event.action
+
+    def dropped(self, event):
+        """Files were dropped on the window. The first file is the answer of the open question, if this question
+        takes a file (ask_file) and the file has one of its endings."""
+        self.drag(False, event)
+        files = self.root.tk.splitlist(event.data)
+        if self.reply is None or not files:
+            return event.action
+        if not self.drop_endings:
+            self.set_text(self.q_error, "This question takes no file.")
+        elif not files[0].lower().endswith(self.drop_endings):
+            self.set_text(self.q_error, f"Drop a file of this type: {', '.join(self.drop_endings)}.")
+        else:
+            self.answer_with(os.path.abspath(files[0]), os.path.basename(files[0]))
+        return event.action
 
     def px(self, n):
         """Pixels on a normal screen -> pixels on this screen."""
@@ -787,6 +832,7 @@ class App:
         self.do_idle()
         self.reply, self.get, self.check, self.shown_answer = reply, get, check, show
         self.keys = keys or {}
+        self.drop_endings = ()
         self.question_text = question
         self.q_title.configure(text=question, fg=TAUPE)
         self.set_text(self.q_help, help_text or "")
@@ -816,8 +862,12 @@ class App:
         if error:
             self.set_text(self.q_error, str(error))
             return
+        self.answer_with(answer, self.shown_answer(answer))
+
+    def answer_with(self, answer, shown):
+        """Give the answer to the back end. shown = the text of the answer in the messages."""
         self.write(self.question_text + "   ", "question")
-        self.write(self.shown_answer(answer) + "\n", "answer")
+        self.write(shown + "\n", "answer")
         reply = self.reply
         self.no_question("Working ...")
         reply.put(answer)
@@ -929,6 +979,59 @@ class App:
         choose(state["chosen"])
         self.open_question(question, help_text, reply, lambda: state["chosen"],
                            keys={"Up": lambda: move(-1), "Down": lambda: move(1)}, show=lambda v: options[v])
+
+    def do_ask_file(self, question, help_text, options, default, details, endings, browse, reply):
+        """A list question with a drop box above the list. Drop a file on the box (or on the window), or click the
+        box: this is the option browse (it opens the file window), so the list does not show that option."""
+        on_click = (lambda: self.answer_with(browse, options[browse])) if browse in options else None
+        listed = {v: t for v, t in options.items() if v != browse} if on_click else dict(options)
+        if listed:
+            self.do_ask_choice(question, help_text, listed, default if default in listed else next(iter(listed)),
+                               details, {}, reply)
+        else:                                             # no file in the list: only the box (Next = the file window)
+            self.clear_body()
+            self.open_question(question, help_text, reply, lambda: browse, show=lambda v: options[v])
+        if self.can_drop or on_click:
+            box = self.make_drop_box(endings, on_click)
+            first = self.q_body.pack_slaves()[0]
+            box.pack(fill="x", pady=(0, self.px(10)), **({"before": first} if first is not box else {}))
+        self.drop_endings = endings if self.can_drop else ()
+
+    def make_drop_box(self, endings, on_click):
+        """The box with a dashed border: "Drop the file here, or click to select it". It is red when the mouse or a
+        dragged file is over it. on_click: the action of a click, or None."""
+        px, font = self.px, self.font
+        box = tk.Canvas(self.q_body, height=px(84), bg=PANEL, highlightthickness=0,
+                        cursor="hand2" if on_click else "arrow")
+        if self.can_drop:
+            title, second = "Drop the file here", "or click to select it" if on_click else ""
+        else:
+            title, second = "Click to select the file", ""
+        kinds = ", ".join(e.lstrip(".").upper() for e in endings)
+        second = "   ".join(t for t in (second, f"({kinds})" if kinds else "") if t)
+        state = {"mouse": False}
+
+        def paint(event=None):
+            box.delete("all")
+            width, height = box.winfo_width(), box.winfo_height()
+            hot = (state["mouse"] and on_click is not None) or self.drag_over
+            box.create_rectangle(px(2), px(2), width - px(3), height - px(3), outline=RED if hot else PERLE,
+                                 width=px(2), dash=(6, 4), fill=WHITE)
+            box.create_text(width / 2, height / 2 - px(10), text=title, font=font["option"],
+                            fill=RED if hot else TAUPE)
+            box.create_text(width / 2, height / 2 + px(14), text=second, font=font["small"], fill=GREY_ON_WHITE)
+
+        def mouse(over):
+            state["mouse"] = over
+            paint()
+        box.bind("<Configure>", paint)
+        box.bind("<Enter>", lambda event: mouse(True))
+        box.bind("<Leave>", lambda event: mouse(False))
+        if on_click:
+            box.bind("<Button-1>", lambda event: on_click())
+        box.paint, box.click = paint, on_click
+        self.drop_box = box
+        return box
 
     def do_ask_yes_no(self, question, help_text, default, reply):
         self.clear_body()

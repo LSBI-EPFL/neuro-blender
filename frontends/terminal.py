@@ -269,6 +269,11 @@ def ask_choice(question, help_text, options, default=None, details=None, side=No
                                    instruction=f"({help_text})" if help_text else None, style=_style()))
 
 
+def ask_file(question, help_text, options, default=None, details=None, endings=(), browse=None):
+    """Select one option. A terminal cannot take a dropped file, so this is the same as ask_choice."""
+    return ask_choice(question, help_text, options, default, details)
+
+
 def ask_yes_no(question, help_text="", default="y"):
     """Ask a yes / no question. Return "yes" or "no"."""
     if not menus():

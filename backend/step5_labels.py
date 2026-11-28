@@ -1,7 +1,7 @@
 """
 Step 5: put the labels on the render.
 
-  1. Put the render (transparent background) on a white page.
+  1. Put the render (transparent background) on a white page, or on a transparent page (answer "background").
   2. Add a column on the right with one label for each layer: its name and its real thickness.
   3. Draw a thin line from each label to its layer (Blender gave one image point on each layer).
   4. Add the notes at the bottom (example: "Not to scale").
@@ -78,13 +78,15 @@ def run(scene, image_file, project_folder):
         p["xy"] = [p["xy"][0] - shift[0], p["xy"][1] - shift[1]]
     h, w = render.shape[:2]
 
+    transparent = scene.get("background", "white") == "transparent"   # else: the white page
+    page = "none" if transparent else "white"
     if scene.get("show labels", "yes") == "no":       # the user asked for an image with no text
         final = os.path.join(project_folder, "6_exploded_view.png")
         fig = plt.figure(figsize=(w / 100, h / 100), dpi=100)
         ax = fig.add_axes((0, 0, 1, 1))
         ax.axis("off")
         ax.imshow(render)
-        fig.savefig(final, dpi=100, facecolor="white")
+        fig.savefig(final, dpi=100, facecolor=page, transparent=transparent)
         plt.close(fig)
         ui.success("Exploded view ready (no labels).", os.path.abspath(final))
         return final
@@ -128,7 +130,7 @@ def run(scene, image_file, project_folder):
 
     ax.text(0.02 * w, page_h - 0.8 * pixels, notes, color=NOTE_COLOUR, fontsize=0.7 * size, va="bottom")
     final = os.path.join(project_folder, "6_exploded_view.png")
-    fig.savefig(final, dpi=100, facecolor="white")
+    fig.savefig(final, dpi=100, facecolor=page, transparent=transparent)
     plt.close(fig)
     ui.success("Exploded view ready.", os.path.abspath(final))
     return final

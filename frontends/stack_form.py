@@ -117,7 +117,13 @@ class StackForm:
         return {f"layer {index + 1} {k}": v for k, v in values.items()}
 
     def questions(self, index):
-        return self.make_questions(index + 1, [dict(v) for v in self.layers[:index]])
+        """The questions of a layer. The layers below go with their colours of now (a colour picked in this form is
+        the default colour of the same material in a higher layer)."""
+        below = []
+        for i, values in enumerate(self.layers[:index]):
+            materials = parse_materials(values.get("materials", "")) or []
+            below.append({**values, "colours": ", ".join(self.colours[i].get(name, "") for name, _ in materials)})
+        return self.make_questions(index + 1, below)
 
     def fill_defaults(self, index):
         """Give each necessary question of a layer with no answer its default answer."""

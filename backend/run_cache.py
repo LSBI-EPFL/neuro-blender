@@ -2,10 +2,15 @@
 The results that one run of the tool keeps, so that going back is fast: the shapes of the mask file, the layer
 images, the device map, the 3D scenes and the test renders.
 
-flow.run() clears all of them at the start of each run. So a new run (example: Start again after a change of the
-mask file) never uses a result of an old run. Inside one run, going back uses the kept results.
+The results stay for the next run with the same mask file (example: Start again, then "change answers"), so the
+tool does not read the file again. flow.run() calls use_mask_file(): if the file is a different file, or if it
+changed on disk (modification time or size), the tool forgets all the results. Inside one run, going back uses the
+kept results.
 """
+import os
+
 _results = {}       # {kind: {key: result}}
+_mask_stamp = None  # (path, modification time, size) of the mask file of the kept results
 
 
 def get(kind, key, make):
@@ -26,6 +31,21 @@ def add(kind, key):
     _results.setdefault(kind, {})[key] = True
 
 
+def use_mask_file(mask_file):
+    """Keep the results only if they come from this mask file, and the file did not change since then."""
+    global _mask_stamp
+    try:
+        info = os.stat(mask_file)
+        stamp = (os.path.normcase(os.path.abspath(mask_file)), info.st_mtime_ns, info.st_size)
+    except OSError:
+        stamp = None
+    if stamp is None or stamp != _mask_stamp:
+        clear()
+    _mask_stamp = stamp
+
+
 def clear():
-    """Forget all the results. flow.run() calls this at the start of each run."""
+    """Forget all the results."""
+    global _mask_stamp
     _results.clear()
+    _mask_stamp = None

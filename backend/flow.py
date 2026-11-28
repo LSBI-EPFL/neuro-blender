@@ -23,6 +23,7 @@ The results go into "projects/<name of the mask file>/". The answers go into sta
 """
 import hashlib
 import os
+import re
 import shutil
 import time
 
@@ -53,8 +54,8 @@ LAST_MASK_FILE = None               # the mask file of the last run (the window 
 
 
 def choose_mask_file():
-    """Ask for the mask file: a file in my_designs, or the choice "Find the file in a window".
-    The window never opens before the user selects this choice."""
+    """Ask for the mask file: a file in my_designs, the choice "Find the file in a window", or (window) a mask file
+    dropped on the window. The file window never opens before the user selects this choice."""
     endings = (".dxf",) + step1_read_mask.GDS_ENDINGS
     os.makedirs(DESIGNS, exist_ok=True)                   # the folder for the mask files of the user
     designs = sorted(f for f in os.listdir(DESIGNS) if f.lower().endswith(endings))
@@ -64,10 +65,16 @@ def choose_mask_file():
     if not designs:
         details[WINDOW] += " Tip: put mask files in folder my_designs to list them here."
     while True:
-        choice = ui.ask_choice("Which mask file do you want to use?", "", options,
-                               default=designs[0] if designs else WINDOW, details=details)
-        if choice != WINDOW:
+        choice = ui.ask_file("Which mask file do you want to use?", "", options,
+                             default=designs[0] if designs else WINDOW, details=details, endings=endings,
+                             browse=WINDOW)
+        if choice in designs:
             return os.path.join(DESIGNS, choice)
+        if choice != WINDOW:                              # a file dropped on the window
+            if os.path.isfile(choice) and choice.lower().endswith(endings):
+                return os.path.abspath(choice)
+            ui.warn(f"Not a mask file (DXF or GDS): {choice}")
+            continue
         file = ui.pick_file("Select mask file", DESIGNS,
                             [("Mask file (DXF or GDS)", "*.dxf *.gds *.gds2 *.gdsii"), ("All files", "*.*")])
         if file:
@@ -119,6 +126,61 @@ def project_folder_for(mask_file):
     return folder
 
 
+# The result files of the tool in a project folder: their names start with the number of the step (1_ to 6_). Other
+# files in the folder (the answers, mask_file.txt, the archive, files of the user) are never moved or deleted.
+RESULT_NAME = re.compile(r"[1-6]_")
+FINAL_IMAGE = "6_exploded_view.png"
+KIND_OF_FILE = {"5_render.png": "render", "5_render.blend": "blender"}   # all other result files: "steps"
+
+
+def result_files(folder):
+    """The names of the result files (and result folders) in a project folder."""
+    return sorted(name for name in os.listdir(folder) if RESULT_NAME.match(name)) if os.path.isdir(folder) else []
+
+
+def keep_or_archive(folder, stack_file):
+    """The project folder has results of an earlier run: ask to move them to the archive, or to overwrite them.
+    The archive is archive/<date and time>/ in the project folder, with a copy of the answers of these results."""
+    old = result_files(folder)
+    if not old:
+        return
+    choice = ui.ask_choice(
+        "This design has results from an earlier run. What do you want to do with them?", "",
+        {"archive": "Move them to the archive folder", "overwrite": "Overwrite them"}, default="archive",
+        details={"archive": "Moves them to archive/<date and time>, with a copy of their answers.",
+                 "overwrite": "New results replace the old results."})
+    if choice == "overwrite":
+        return
+    target = os.path.join(folder, "archive", time.strftime("%Y-%m-%d_%H-%M-%S"))
+    number = 1
+    while os.path.exists(target):                         # two runs in one second
+        number += 1
+        target = os.path.join(folder, "archive", time.strftime("%Y-%m-%d_%H-%M-%S") + f"_{number}")
+    os.makedirs(target)
+    for name in old:
+        try:
+            shutil.move(os.path.join(folder, name), target)
+        except OSError as error:                          # example: the image is open in another program
+            ui.warn(f"Cannot move {name}: {error}. The new run overwrites it.")
+    if os.path.exists(stack_file):
+        shutil.copy(stack_file, target)
+    ui.show_path("Old results moved to:", target)
+
+
+def remove_unkept(folder, keep):
+    """Delete the result files of the kinds that the user did not tick (keep = "render, blender, steps", or "none").
+    The final image and the answers always stay."""
+    kinds = set(answers.split_layers(keep))
+    for name in result_files(folder):
+        if name == FINAL_IMAGE or KIND_OF_FILE.get(name, "steps") in kinds:
+            continue
+        path = os.path.join(folder, name)
+        try:
+            shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
+        except OSError as error:
+            ui.warn(f"Cannot delete {name}: {error}")
+
+
 def change_one_part(stack):
     """Remove the saved answers of one part, so that the steps ask these questions again. Return the stack."""
     part = ui.ask_choice("Which part do you want to change?", "",
@@ -126,7 +188,7 @@ def change_one_part(stack):
                          details={"device": "Outline layer, device number, through holes.",
                                   "stack": "One layer, new layer on top, or full stack.",
                                   "view": "Part of device, cleave angle, layer spacing, coating distance, camera, "
-                                          "dashed lines, labels."})
+                                          "dashed lines, labels, background, files to keep."})
     if part == "device":
         remove = ["outline layer", "device number", "through holes"]
     elif part == "view":
@@ -159,7 +221,8 @@ def choose_step(stack):
     steps = [n for n in answered_steps(stack) if n in (2, 3, 4)]
     details = {2: "Outline layer, device number, through holes.",
                3: "The stack form: all layers.",
-               4: "Part of device, cleave angle, layer spacing, coating distance, camera, dashed lines, labels."}
+               4: "Part of device, cleave angle, layer spacing, coating distance, camera, dashed lines, labels, "
+                  "background, files to keep."}
     choice = ui.ask_choice("Which step do you want to change?", "Old answers are the default answers.",
                            {str(n): f"{n} {ui.STEPS[n - 1][0]}" for n in steps},
                            default="3" if 3 in steps else str(steps[0]),
@@ -231,9 +294,9 @@ def run(mask_file=None, go_to=None):
     answers.HISTORY.clear()                               # a new run starts clean (the window can run it again)
     answers.PREVIOUS.clear()
     answers.CURRENT_STEP, answers.SAVE = 0, None
-    run_cache.clear()                                     # a new run never uses the results of an old run
     given = mask_file
     ask_file = not given
+    asked_old_results = set()                             # the old results question: one time for each folder
     while True:
         # The start: the mask file, then the saved answers. Esc goes back from the steps to here.
         if ask_file:
@@ -245,9 +308,19 @@ def run(mask_file=None, go_to=None):
             except answers.GoToStep:                      # the start already: ask again
                 continue
         LAST_MASK_FILE = mask_file
+        run_cache.use_mask_file(mask_file)                # another file, or the file changed: read it again
         ui.show_path("Mask file:", mask_file)
         project_folder = project_folder_for(mask_file)
         stack_file = os.path.join(project_folder, "stack.yaml")
+        if project_folder not in asked_old_results:
+            try:
+                keep_or_archive(project_folder, stack_file)
+            except (answers.GoBack, answers.GoToStep):    # back: the mask file question
+                if given:
+                    ui.note("No earlier question.")
+                ask_file = not given
+                continue
+            asked_old_results.add(project_folder)
         try:
             if go_to and os.path.exists(stack_file):      # a click on a step at the end: no start question
                 stack, asked = answers.read_stack(stack_file), True
@@ -352,6 +425,7 @@ def run_steps(mask_file, stack, stack_file, project_folder, go_to=None):
                 number = target - 1
 
     # The results, after the image of step 5: the Blender file (the 3D scene, to change in Blender), the answers.
+    remove_unkept(project_folder, stack.get("render keep files", "render, blender, steps"))
     blend_file = os.path.splitext(results[3][1])[0] + ".blend"
     if os.path.exists(blend_file):
         ui.show_path("Blender file:", blend_file)

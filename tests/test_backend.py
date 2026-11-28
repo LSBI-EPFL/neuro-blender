@@ -479,6 +479,10 @@ painted = copy.deepcopy(scene_old)
 paint(painted, recoloured)
 check("look: a colour change gives the same shape key", shape_answers(look_layers) == shape_answers(recoloured))
 check("look: the old scene with the new colours = a new build with the new colours", painted == scene_new)
+check("round edges: the openings get 0.1 x the drawn thickness (at most the radius of the other edges)",
+      all(abs(o["round_openings"] - min(o["round"], LOOK["round_openings"] * (o["z1"] - o["z0"]))) < 1e-12
+          for o in scene_old["objects"])
+      and any(o["round_openings"] < o["round"] for o in scene_old["objects"]))
 check("look: a thickness change gives a new shape key",
       shape_answers([dict(look_layers[0], materials=[dict(look_layers[0]["materials"][0], thickness=9.0)])])
       != shape_answers(look_layers[:1]))
@@ -665,6 +669,9 @@ class ScriptedFront:
     def ask_choice(self, question, help_text, options, default, details, side):
         return self.answer(question, default, next(iter(options)))
 
+    def ask_file(self, question, help_text, options, default, details, endings, browse=None):
+        return self.answer(question, default, next(iter(options)))
+
     def ask_yes_no(self, question, help_text, default):
         return self.answer(question, "yes" if default == "y" else "no")
 
@@ -685,6 +692,7 @@ data = yaml.safe_load(open(os.path.join(here, "tests", "design", "linear_probe_s
 data["layers finished"] = True
 data["render"] = {"view": "electrodes", "small electrodes larger": True, "guide lines": "all", "labels": True,
                   "cleave angle": 9, "space between layers": 0, "coating distance": 20,
+                  "background": "white", "keep files": ["render", "blender", "steps"],
                   "camera": {"turn": 32, "height": 11}}
 os.makedirs(os.path.join(folder, "linear_probe"))
 stack_file = os.path.join(folder, "linear_probe", "stack.yaml")
@@ -742,6 +750,11 @@ check("going to a step: the later step 4 asks its questions again (view, dashed 
       "From which view do you want to see the device?" in questions
       and "Dashed lines from the electrodes to the coatings?" in questions and "Show labels?" in questions)
 check("going to a step: then the tool goes on to the next open question", questions[-1] == "Image quality?")
+check("going to a step: step 4 asks which files to keep (ticked: the old answer)",
+      [d for q, d in front.asked if q == "Which files do you want to keep?"] == [["render", "blender", "steps"]])
+check("old results: a second run on a design with results asks to archive or overwrite them (before the start)",
+      questions[0].startswith("This design has results from an earlier run")
+      and questions[1].startswith("This design has saved answers"))
 
 # One way to move. A later step with answers: from step 2 straight to step 4 (step 2 keeps its answers).
 yaml.safe_dump(data, open(stack_file, "w", encoding="utf8"), sort_keys=False)
@@ -797,8 +810,9 @@ except StopTest:
     pass
 step4_build_scene.render_choices = saved_render_choices
 questions = [q for q, _ in front.asked]
+OLD_RESULTS_MENU = ["archive", "overwrite"]         # the old results question (before the start menu): not counted
 check("window start menu: it has 'Change some answers'; it knows the steps with answers",
-      "change" in front.menus[0] and [1, 2, 3, 4] in front.answered)
+      "change" in [m for m in front.menus if m != OLD_RESULTS_MENU][0] and [1, 2, 3, 4] in front.answered)
 check("one way to move: a click on step 3 at the start opens the stack form; the answers stay the same",
       front.forms[:1] == ["stack"] and answers.read_stack(stack_file).get("layer 4 openings") ==
       "OPENINGS_ELECTRODES, OPENINGS_PADS")
@@ -821,10 +835,11 @@ except StopTest:
     pass
 step4_build_scene.render_choices = saved_render_choices
 questions = [q for q, _ in front.asked]
+start = [q for q in questions if not q.startswith("This design has results from an earlier run")]
 check("window 'Change some answers': Back from 'Which step?' shows the menu again; the steps 2, 3, 4 are options",
-      questions[:3] == ["This design has saved answers. What do you want to do?", "Which step do you want to change?",
-                        "This design has saved answers. What do you want to do?"]
-      and front.menus[1] == ["2", "3", "4"])
+      start[:3] == ["This design has saved answers. What do you want to do?", "Which step do you want to change?",
+                    "This design has saved answers. What do you want to do?"]
+      and [m for m in front.menus if m != OLD_RESULTS_MENU][1] == ["2", "3", "4"])
 check("window 'Change some answers', step 3: stack form, then all the step 4 questions; the answers stay the same",
       front.forms == ["stack", "page"] and "Dashed lines from the electrodes to the coatings?" in questions
       and answers.read_stack(stack_file).get("layer 4 openings") == "OPENINGS_ELECTRODES, OPENINGS_PADS")
@@ -843,9 +858,10 @@ except StopTest:
 step4_build_scene.render_choices = saved_render_choices
 questions = [q for q, _ in front.asked]
 check("go to step 3 from 'Image quality?': stack form, then all the step 4 questions, then 'Image quality?'",
-      front.forms == ["stack", "page"] and questions[-4:] == [
+      front.forms == ["stack", "page"] and questions[-6:] == [
           "From which view do you want to see the device?",
-          "Dashed lines from the electrodes to the coatings?", "Show labels?", "Image quality?"])
+          "Dashed lines from the electrodes to the coatings?", "Show labels?", "Background?",
+          "Which files do you want to keep?", "Image quality?"])
 check("go to step 3: the answers of step 4 stay the same when the user keeps the defaults",
       answers.read_stack(stack_file).get("render camera turn and height") == "32, 11"
       and answers.read_stack(stack_file).get("render guide lines") == "all")
@@ -862,10 +878,12 @@ saved = answers.read_stack(stack_file)
 check("stop during a change: the removed answers stay in stack.yaml",
       saved.get("render view") == "electrodes" and saved.get("render camera turn and height") == "32, 11"
       and saved.get("render labels") == "yes")
+check("colour memory: step 3 keeps the colour of each material in material_colours.yaml of the projects folder",
+      answers.remembered_colours(folder).get("Au") == "#e3b04b")
 shutil.rmtree(folder, ignore_errors=True)
 flow.PROJECTS, step4_build_scene.find_blender = saved_globals
 
-# ── the results of a run: a new run never uses the results of an old run ──
+# ── the results of a run: kept for the next run with the same, unchanged mask file ──
 from backend import run_cache
 
 made = []
@@ -873,16 +891,168 @@ run_cache.clear()
 run_cache.get("mask file", "a.dxf", lambda: made.append(1) or "shapes")
 run_cache.get("mask file", "a.dxf", lambda: made.append(1) or "shapes")
 check("run cache: one run makes a result one time", made == [1])
-with tempfile.TemporaryDirectory() as temp:                  # flow.run() clears the cache at its start
-    flow.PROJECTS = temp
-    ui.use(ScriptedFront([("Which mask file", "STOP")]))
+with tempfile.TemporaryDirectory() as temp:
+    mask, other = os.path.join(temp, "a.dxf"), os.path.join(temp, "b.dxf")
+    for name in (mask, other):
+        with open(name, "w") as f:
+            f.write("0 EOF ")
+    run_cache.clear()
+    run_cache.use_mask_file(mask)
+    run_cache.get("mask file", mask, lambda: "shapes")
+    run_cache.use_mask_file(mask)                            # Start again with the same file
+    check("run cache: Start again with the same file keeps the results", run_cache.has("mask file", mask))
+    with open(mask, "a") as f:                               # the user changes the file
+        f.write("0 EOF ")
+    run_cache.use_mask_file(mask)
+    check("run cache: a changed mask file is read again", not run_cache.has("mask file", mask))
+    run_cache.get("mask file", mask, lambda: "shapes")
+    run_cache.use_mask_file(other)
+    check("run cache: another mask file starts with no kept results", not run_cache.has("mask file", mask))
+    flow.PROJECTS = temp                                     # flow.run() checks the mask file at its start
+    run_cache.get("mask file", "a.dxf", lambda: "old")
+    ui.use(ScriptedFront([("Which mask file", mask)]))
     try:
-        flow.run()
-    except StopTest:
+        flow.run()                                           # the file has no shapes: the run stops in step 1
+    except Exception:
         pass
     flow.PROJECTS = saved_globals[0]
-check("run cache: a new run starts with no kept results (an edited mask file is read again)",
-      not run_cache.has("mask file", "a.dxf") and run_cache.get("mask file", "a.dxf", lambda: "new") == "new")
+    check("run cache: flow.run() forgets the results of another mask file", not run_cache.has("mask file", "a.dxf"))
+run_cache.clear()
+
+# ── the colour of each material: the last colour is the default colour in later designs ──
+from backend import step3_layer_questions as s3
+
+with tempfile.TemporaryDirectory() as temp:
+    answers.remember_colours(temp, [{"materials": [{"name": "Pt", "colour": "#c9c7c2", "transparency": 0},
+                                                   {"name": "PDMS", "colour": "#3366cc", "transparency": 40}]}])
+    answers.remember_colours(temp, [{"materials": [{"name": "Pt", "colour": "#aaaaaa", "transparency": 0}]}])
+    remembered = answers.remembered_colours(temp)
+    check("colour memory: the last colour of each material is kept, with its transparency",
+          remembered == {"Pt": "#aaaaaa", "PDMS": "#3366cc 40%"})
+    with open(os.path.join(temp, answers.COLOURS_FILE), "w", encoding="utf8") as f:
+        f.write("Pt: not a colour\nAu: '#e3b04b'\n")
+    check("colour memory: a bad colour in the file is not used; a missing file gives no colours",
+          answers.remembered_colours(temp) == {"Au": "#e3b04b"} and answers.remembered_colours(
+              os.path.join(temp, "no folder")) == {})
+s3.REMEMBERED.clear()                     # (the flow tests above filled it)
+s3.REMEMBERED.update(remembered)
+colours_question = next(q for q in s3.layer_questions(2, None, ["OUTLINE"], {}, "OUTLINE", {"Pt": "#111111"}, old={})
+                        if q.kind == "colours")
+s3.REMEMBERED.clear()
+check("colour memory: the colour of a layer below comes first, then the remembered colour",
+      colours_question.default == {"Pt": "#111111", "PDMS": "#3366cc 40%"})
+
+# ── the background of the final image: white or transparent ──
+import json
+
+import matplotlib.image as mpimg
+import numpy as np
+from backend import step5_labels
+
+
+class QuietFront:
+    def header(self, *args): pass
+    success = note = header
+
+
+ui.use(QuietFront())
+with tempfile.TemporaryDirectory() as temp:
+    render = np.zeros((120, 200, 4))
+    render[30:90, 50:150] = (0.8, 0.5, 0.2, 1.0)                      # the device: opaque, in the middle
+    image_file = os.path.join(temp, "5_render.png")
+    mpimg.imsave(image_file, render)
+    with open(image_file[:-4] + "_points.json", "w", encoding="utf8") as f:
+        json.dump({"resolution": [200, 120], "points": [{"index": 0, "xy": [100, 60]}]}, f)
+    corners = {}
+    for background in ("white", "transparent"):
+        scene = {"labels": [{"anchor": 0, "name": "PI", "text": "5 um"}], "notes": ["Not to scale"],
+                 "background": background}
+        final = mpimg.imread(step5_labels.run(scene, image_file, temp))
+        corners[background] = (tuple(final[0, 0]), final.shape[2] == 4 and final[final.shape[0] // 2, 40][3])
+check("background: white = an opaque white page",
+      corners["white"][0][:3] == (1.0, 1.0, 1.0) and corners["white"][0][-1] == 1.0)
+check("background: transparent = no page (alpha 0 in the corner), the device stays opaque",
+      corners["transparent"][0][3] == 0.0 and corners["transparent"][1] == 1.0)
+
+# ── the mask file: a file dropped on the window is the answer ──
+class DropFront(ScriptedFront):
+    def __init__(self, drops):
+        super().__init__([])
+        self.drops, self.warnings = list(drops), []
+
+    def ask_file(self, question, help_text, options, default, details, endings, browse=None):
+        self.endings = endings
+        return self.drops.pop(0)
+
+    def warn(self, text):
+        self.warnings.append(text)
+
+
+with tempfile.TemporaryDirectory() as temp:
+    dropped = os.path.join(temp, "My implant.DXF")
+    open(dropped, "w").close()
+    picture = os.path.join(temp, "photo.png")
+    open(picture, "w").close()
+    drop_front = DropFront([picture, dropped])
+    ui.use(drop_front)
+    chosen = flow.choose_mask_file()
+check("drop: a dropped DXF file is the mask file; another file type gets a warning, then the question again",
+      chosen == os.path.abspath(dropped) and len(drop_front.warnings) == 1 and ".dxf" in drop_front.endings)
+
+# ── old results: archive or overwrite; files to keep ──
+
+def project_with_results(temp):
+    """A project folder with result files of an earlier run, the answers, and a file of the user."""
+    project = os.path.join(temp, "implant")
+    os.makedirs(os.path.join(project, "1_all_layers"))
+    open(os.path.join(project, "1_all_layers", "01_OUTLINE.png"), "w").close()
+    for name in ("4_stack.png", "5_scene.json", "5_render.png", "5_render.blend", "6_exploded_view.png",
+                 "stack.yaml", "mask_file.txt", "Runcard.xlsx"):
+        open(os.path.join(project, name), "w").close()
+    return project
+
+
+with tempfile.TemporaryDirectory() as temp:
+    project = project_with_results(temp)
+    archive_front = ScriptedFront([("This design has results from an earlier run", "archive")])
+    ui.use(archive_front)
+    flow.keep_or_archive(project, os.path.join(project, "stack.yaml"))
+    archived = os.listdir(os.path.join(project, "archive"))
+    moved = sorted(os.listdir(os.path.join(project, "archive", archived[0]))) if len(archived) == 1 else []
+    check("old results: 'archive' moves only the result files (1_ to 6_), with a copy of the answers",
+          moved == ["1_all_layers", "4_stack.png", "5_render.blend", "5_render.png", "5_scene.json",
+                    "6_exploded_view.png", "stack.yaml"]
+          and sorted(os.listdir(project)) == ["Runcard.xlsx", "archive", "mask_file.txt", "stack.yaml"])
+    ui.use(ScriptedFront([]))
+    flow.keep_or_archive(project, os.path.join(project, "stack.yaml"))
+    check("old results: no result files, no question", ui._front.asked == [])
+
+with tempfile.TemporaryDirectory() as temp:
+    project = project_with_results(temp)
+    ui.use(ScriptedFront([("This design has results from an earlier run", "overwrite")]))
+    flow.keep_or_archive(project, os.path.join(project, "stack.yaml"))
+    check("old results: 'overwrite' moves nothing", "archive" not in os.listdir(project)
+          and "6_exploded_view.png" in os.listdir(project))
+    flow.remove_unkept(project, "render")
+    check("keep files: 'render' keeps the final image and the render; the other result files go; the answers, "
+          "mask_file.txt and the files of the user stay",
+          sorted(os.listdir(project)) == ["5_render.png", "6_exploded_view.png", "Runcard.xlsx", "mask_file.txt",
+                                          "stack.yaml"])
+    flow.remove_unkept(project, "none")
+    check("keep files: 'none' keeps only the final image of the results",
+          sorted(os.listdir(project)) == ["6_exploded_view.png", "Runcard.xlsx", "mask_file.txt", "stack.yaml"])
+    project = project_with_results(os.path.join(temp, "second"))
+    flow.remove_unkept(project, "render, blender, steps")
+    check("keep files: all ticked keeps all the files", len(os.listdir(project)) == 9)
+
+with tempfile.TemporaryDirectory() as temp:
+    path = os.path.join(temp, "stack.yaml")
+    answers.write_stack(path, {"render keep files": "render, steps"})
+    first = answers.read_stack(path).get("render keep files")
+    answers.write_stack(path, {"render keep files": "none"})
+    check("keep files: saved as a list in stack.yaml ('none' = an empty list), and read back the same",
+          first == "render, steps" and answers.read_stack(path).get("render keep files") == "none"
+          and "keep files: []" in open(path, encoding="utf8").read())
 
 failures = 0
 for name, ok in RESULTS:

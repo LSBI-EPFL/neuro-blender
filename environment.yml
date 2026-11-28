@@ -20,3 +20,6 @@ dependencies:
   - questionary>=2.0  # the questions: arrow-key menus, checkboxes, input checks
   - tk                # the window (GUI) and the pop-up windows (file and colour)
   - pillow>=10.0      # shows the images in the window
+  - pip
+  - pip:
+      - tkinterdnd2>=0.4.3   # drop a mask file on the window

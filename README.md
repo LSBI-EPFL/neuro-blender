@@ -26,13 +26,15 @@ answers, or change some of them.
 
 ## Install (one time)
 
+In the commands below, replace `path_of_your_choice` with the folder where you want to keep the tool.
+
 ### 1. Install the programs
 
 1. Install **Blender** from https://www.blender.org/download. Use the default settings.
 2. Install **Miniconda** (or Anaconda) from https://www.anaconda.com/download. Use the default settings. It
    installs Python.
-3. Optional: install **Git** from https://git-scm.com/downloads. Git downloads the tool with one command and
-   gets the updates.
+3. Recommended: install **Git** from https://git-scm.com/downloads. Git downloads the tool with one command, and
+   it gets each update of the tool with one command (see [Update the tool](#update-the-tool)).
 
 ### 2. Download Neuro Blender
 
@@ -44,7 +46,7 @@ answers, or change some of them.
    cd path_of_your_choice
    git clone <address>
    ```
-   The tool is now in the folder you created `path_of_your_choice/neuro-blender`.
+   Git makes the folder `path_of_your_choice/neuro-blender`, with the tool in it.
 
 **Option B: without Git** (but why would you do this to yourself)
 1. At the top of this page, click the green **Code** button, then **Download ZIP**.
@@ -90,6 +92,18 @@ To use the terminal (TUI) instead of the window (GUI), type `python main.py --te
 - If the tool does not find Blender, it asks you to select the Blender program. It asks one time only.
 - Put your mask files into the folder `my_designs`, and the tool shows them in a list. You can also select a mask
   file from any other folder.
+
+## Update the tool
+
+With Git, type these commands in the terminal. `git pull` gets the new version of the tool. The last command adds
+the new packages that the tool needs, if there are any.
+```
+cd path_of_your_choice/neuro-blender
+git pull
+conda env update -f environment.yml
+```
+
+Without Git, download the ZIP file again (Option B above). Then type the same commands, but not `git pull`.
 
 ## Your results
 

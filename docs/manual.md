@@ -92,9 +92,13 @@ python main.py --terminal
 The window and the terminal ask the same questions, in the same order, and they save the same answers.
 You can start with one and continue with the other.
 
+If the tool does not find Blender, it asks you to select the Blender program. It asks one time only.
+
 The first question asks for your mask file:
 - If the folder `my_designs` contains mask files, a list shows them.
-- The list always has the choice "Find the file in a window ...". Select it to find your file anywhere.
+- In the window, a box above the list says "Drop the file here, or click to select it". Drop the mask file (DXF or
+  GDS) on the box, for example from File Explorer or the Finder, or click the box to find your file anywhere.
+- In the terminal, the list has the choice "Find the file in a window ..." in place of the box.
 
 ## The window
 
@@ -199,6 +203,11 @@ The tool asks these questions for each layer:
 | Cleave | Encapsulation only. `yes` = the layer bends away from the tracks in the image. |
 | Surface | Tracks and coatings only. `shiny` (like a metal) or `matte` (no shine). |
 
+The default colour of a material comes from:
+1. the colour of the same material in a layer below;
+2. else, the last colour of this material in any of your designs. The tool keeps these colours in
+   `projects/material_colours.yaml`.
+
 After each layer, the tool shows a drawing of the stack in your colours.
 
 In the window, step 3 is one form: one line for each layer, top layer first. Click a line to open its values,
@@ -246,15 +255,24 @@ Rules for the stack:
    | All the dashed lines | A line for each electrode. Many lines can hide the device. |
 
 8. Show the labels? No = an image with no text.
-9. Select the image quality: `preview` (1280 × 720 pixels) or `final` (2560 × 1440 pixels).
+9. Select the background of the final image: `White`, or `Transparent` (a PNG with no background, for slides with a
+   coloured background).
+10. Tick the files to keep: the render with no labels (`5_render.png`), the Blender scene (`5_render.blend`), and the
+    images and files of the steps (`1_` to `5_`). The final image and the answers are always kept. No tick = the
+    final image only. At the end of the run, the tool deletes the result files that you did not tick.
+11. Select the image quality: `preview` (1280 × 720 pixels) or `final` (2560 × 1440 pixels).
 
 How the tool draws the layers:
 - The encapsulation layer directly on the tracks fills the space around the tracks, down to the layer under the
   tracks. The tool finds this space from the mask file: the distance between the outline of the layer and the
   tracks. So, at the edge of the device, the two encapsulation layers touch, and the tracks are inside them, as in
   the real device. With a space between the layers, the underside of this layer shows the shape of the tracks.
+  When this layer is transparent, its underside and its steps along the tracks are fully clear, so the layer shows
+  as one even sheet over the tracks.
 - All the edges are round (a fillet). The radius is half the drawn thickness of the layer. On a narrow shape, the
   radius is smaller, so that the rounded edges of the two sides do not cross.
+- The edges of the openings have a small radius (0.1 × the drawn thickness), so that the wall of each opening stays
+  straight, as in the real device. A fully round wall, seen through a transparent layer, shows as a 4-pointed star.
 
 ### Step 5: add the labels
 
@@ -263,6 +281,16 @@ The tool adds the labels and saves the final image. The window shows the image o
 border.
 
 ## Next run with the same mask file
+
+If the project folder has results of an earlier run, the tool first asks what to do with them:
+
+| Choice | Result |
+|---|---|
+| Move them to the archive folder | The tool moves the old results to `archive/<date and time>/` in the project folder, with a copy of the answers that made them. |
+| Overwrite them | The new results replace the old results. |
+
+The tool moves only its own result files (the names that start with `1_` to `6_`). Your own files in the folder
+stay.
 
 The tool saves your answers. At the next run with the same mask file, a list shows 3 choices:
 
@@ -292,6 +320,16 @@ The tool puts all the results in the folder `projects/<name of your mask file>/`
 | `1_all_layers/` | One image of each mask layer of the full mask file. |
 | `1_layer_overview.png` | All the layers in one image (only for a GDS file). |
 | `stack.yaml` | Your answers. |
+| `archive/` | Old results, one folder for each run, with their answers (only if you selected the archive). |
+
+The question "Which files do you want to keep?" (step 4) sets which result files stay after the run.
+
+The folder `projects/` also has 2 files that are the same for all your designs:
+
+| File | Content |
+|---|---|
+| `blender.txt` | The location of the Blender program. |
+| `material_colours.yaml` | The last colour of each material. It gives the default colours in new designs. |
 
 ## The answers file (`stack.yaml`)
 
@@ -315,9 +353,11 @@ render:                     # the view
   view: electrodes
   guide lines: all
   labels: true
+  background: white
   cleave angle: 9
   space between layers: 0
   coating distance: 20
+  keep files: [render, blender, steps]
   camera:
     turn: 32
     height: 11
@@ -357,7 +397,7 @@ environment.yml               the packages for the conda environment
 requirements.txt              the same packages, for pip (without conda)
 backend/                      all the logic
   flow.py                     the order of the work: the mask file, the saved answers, the 5 steps, going back
-  run_cache.py                the results that one run keeps (going back is fast); cleared at each run
+  run_cache.py                the results that a run keeps (going back is fast); cleared when the mask file changes
   questions.py                questions as data: key, kind, text, default, check, condition (both front ends)
   ui.py                       the link to the front end: the list of all the questions and messages
   answers.py                  the answers: saving, the return to a previous question, the stack.yaml file
@@ -400,7 +440,7 @@ The values that control the look are at the top of these files:
 
 | File | Value | Controls |
 |---|---|---|
-| `backend/step4_build_scene.py` | `LOOK` | Drawn thicknesses (and their limit for narrow features), the default cleave angle and space, gaps between the coatings, the radius of the rounded edges. |
+| `backend/step4_build_scene.py` | `LOOK` | Drawn thicknesses (and their limit for narrow features), the default cleave angle and space, gaps between the coatings, the radius of the rounded edges (`round_edges`), and the smaller radius at the openings (`round_openings`). |
 | `backend/step4_build_scene.py` | `SOME_GUIDES` | The number of electrodes in the middle dashed-line option (6). |
 | `frontends/theme.py` | `RED`, `GROSEILLE`, `LEMAN`, `PERLE` and the greys | The colours of the window and the terminal (the colours of the EPFL graphic charter). |
 | `backend/step4_build_scene.py` | `VIEWS` | The camera angles of the 4 views. |

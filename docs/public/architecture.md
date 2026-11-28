@@ -32,6 +32,11 @@ Each step uses the results of the steps before it.
 
 `ui.STEPS` is the only list of the steps. The results go into `projects/<name of the mask file>/`.
 
+The result files are the names that start with `1_` to `6_` (`flow.RESULT_NAME`). Before the start question,
+`flow.keep_or_archive()` asks to move old result files to `archive/<date and time>/` or to overwrite them. At the
+end of the run, `flow.remove_unkept()` deletes the kinds of result files that the answer `render keep files` does
+not have. The tool never moves or deletes other files in the folder.
+
 ## The answers
 
 - The answers are one flat dictionary of texts, with one key for each answer. Example:
@@ -39,6 +44,9 @@ Each step uses the results of the steps before it.
 - `backend/answers.py` reads and writes the answers file `stack.yaml` (with a format version and a safe write).
   It also reads the answer texts: materials, thicknesses, layer lists, colours.
 - `answers.answer()` returns a saved answer, or asks the question and saves the new answer.
+- `answers.remembered_colours()` and `answers.remember_colours()` read and write `projects/material_colours.yaml`:
+  the last colour of each material, for all designs. Step 3 uses it as the default colour of a material that has no
+  colour in a layer below.
 - `flow.step_of(key)` gives the step that asks each key.
 
 ## Questions as data
@@ -73,6 +81,11 @@ the old answers in `stack.yaml`.
 The back end runs in a separate thread. `frontends/window.py` gets each message and question through a queue
 (`App.poll()`), and the back end waits for the reply. All Tk calls stay in the main thread.
 
+`ui.ask_file()` is a list question that also takes a file dropped on the window (the mask file question). Its
+option `browse` (the choice that opens the file window) shows in the window as a drop box above the list, and not
+in the list. The window uses the package tkinterdnd2 for the drop. Without tkinterdnd2, the window works with no drop. The terminal
+asks the same list with no drop.
+
 ## Blender
 
 | File | Job |
@@ -84,7 +97,9 @@ The back end runs in a separate thread. `frontends/window.py` gets each message 
 ## Results kept in one run
 
 `backend/run_cache.py` keeps the results of one run (shapes, layer images, device map, 3D scenes, test renders), so
-that going back is fast. `flow.run()` clears them at the start of each run.
+that going back is fast. The results stay for the next run with the same mask file (**Start again**). At the start
+of each run, `flow.run()` calls `run_cache.use_mask_file()`: another file, or a change of the file on disk
+(modification time or size), clears all the results.
 
 A change of a look value (`LOOK_ONLY` in `step4_build_scene.py`: colour, transparency, surface) does not make a new
 3D scene. `paint()` puts the new look on the kept scene.

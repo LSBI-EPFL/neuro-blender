@@ -14,6 +14,7 @@ Units: 1 Blender unit = 1 mm.
 import json
 import math
 import os
+from collections import deque
 import sys
 
 import bmesh
@@ -39,6 +40,7 @@ if tuple(bpy.app.version[:2]) < protocol.MINIMUM_BLENDER:
     sys.exit(1)
 W = S["width"]                                   # device width (mm): the scale of all the look values
 MERGE = W * 1e-7                                  # points closer than this are one point (from the size, not in mm)
+INNER = 1                                         # material index of the inner faces of a stepped solid
 
 LENS = 70                                         # camera lens (mm): a longer lens = a flatter view
 QUALITY = {"views": dict(resolution=(640, 360), samples=16),        # the small test images of the views
@@ -136,7 +138,9 @@ def add_stepped_solid(bm, pieces, z_top, overlap):
     have the same border points. Example: the encapsulation layer on the tracks goes down around the tracks.
 
     The solid has: the top face, one bottom face for each piece, and vertical walls. A wall is at the outer border
-    (from the bottom of the piece up to the top), or between two pieces with different bottoms (the step)."""
+    (from the bottom of the piece up to the top), or between two pieces with different bottoms (the step).
+    The inner faces (the bottom faces and the steps) get material index INNER: a transparent layer shows them
+    fully transparent (finish), so the steps along the tracks do not show as lines in the layer."""
     vertices = {}
 
     def vertex(point, z):
@@ -145,10 +149,10 @@ def add_stepped_solid(bm, pieces, z_top, overlap):
             vertices[key] = bm.verts.new((point[0], point[1], z))
         return vertices[key]
 
-    def new_face(face):
+    def new_face(face, inner=False):
         if len(set(face)) == len(face) >= 3:
             try:
-                bm.faces.new(face)
+                bm.faces.new(face).material_index = INNER if inner else 0
             except ValueError:
                 pass                                                    # a face that exists already
 
@@ -172,7 +176,7 @@ def add_stepped_solid(bm, pieces, z_top, overlap):
         points = [p for ring in rings for p in ring]
         for tri in geometry.tessellate_polygon([[Vector((x, y, 0)) for x, y in ring] for ring in rings]):
             new_face([vertex(points[i], z_top) for i in tri])
-            new_face([vertex(points[i], z) for i in tri[::-1]])
+            new_face([vertex(points[i], z) for i in tri[::-1]], inner=True)
 
     for (a, b), bottoms in sides.items():                 # the walls
         low, high = (bottoms[0], z_top) if len(bottoms) == 1 else (min(bottoms[:2]), max(bottoms[:2]))
@@ -182,19 +186,24 @@ def add_stepped_solid(bm, pieces, z_top, overlap):
         up_b = sorted(z for z in levels[b] if low < z < high)
         down_a = sorted((z for z in levels[a] if low < z < high), reverse=True)
         new_face([vertex(a, low), vertex(b, low)] + [vertex(b, z) for z in up_b] + [vertex(b, high), vertex(a, high)]
-                 + [vertex(a, z) for z in down_a])
+                 + [vertex(a, z) for z in down_a], inner=len(bottoms) > 1)
 
 
-def finish(name, bm, material):
+def finish(name, bm, material, inner=None):
+    """Make the object. Faces with material index INNER (add_stepped_solid) get the material inner (with None: the
+    same material as the other faces)."""
     bmesh.ops.remove_doubles(bm, verts=bm.verts[:], dist=MERGE)
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
     mesh = bpy.data.meshes.new(name)
     open_edges = sum(1 for e in bm.edges if len(e.link_faces) < 2)
     if open_edges:                                  # a hole in the surface: the render can show dark areas
         say("warning", text=f"{name}: {open_edges} open edges (holes in the surface). The image can show dark areas.")
+    has_inner = any(f.material_index == INNER for f in bm.faces)
     bm.to_mesh(mesh)
     bm.free()
     mesh.materials.append(material)
+    if has_inner:
+        mesh.materials.append(inner or material)
     obj = bpy.data.objects.new(name, mesh)
     bpy.context.scene.collection.objects.link(obj)
     return obj
@@ -202,27 +211,147 @@ def finish(name, bm, material):
 
 def join_flat_faces(bm):
     """Make good faces for the bevel. First join the triangles of each flat face and remove the points in the middle
-    of straight edges (the triangles of the first fill are long and thin). Then split the joined faces again into
-    well-shaped triangles. A large joined face with many openings keeps edges from its openings to its outer line at
-    very small angles: the bevel slid along these edges and made long spikes through the layer (seen on layers with
-    many openings)."""
+    of straight edges (the triangles of the first fill are long and thin). Then fill each flat area again.
+    A joined face cannot have a hole, so a face with openings keeps "bridge" edges from its openings to its outer
+    line. A fill of the joined faces keeps these edges, and gives long, thin triangles between the openings (angles
+    below 1°). The bevel turned these triangles over: thin lines and spikes from the openings. So each flat area gets
+    a new fill (fill_again) that keeps only its real border."""
     bmesh.ops.remove_doubles(bm, verts=bm.verts[:], dist=MERGE)
     bmesh.ops.recalc_face_normals(bm, faces=bm.faces[:])
-    bmesh.ops.dissolve_limit(bm, angle_limit=math.radians(1), verts=bm.verts[:], edges=bm.edges[:])
+    bmesh.ops.dissolve_limit(bm, angle_limit=math.radians(1), verts=bm.verts[:], edges=bm.edges[:],
+                             delimit={"MATERIAL"})
     bmesh.ops.triangulate(bm, faces=bm.faces[:], quad_method="BEAUTY", ngon_method="BEAUTY")
+    bm.normal_update()
+    for area in flat_areas(bm):
+        if len(area) > 2:
+            fill_again(bm, area)
     bm.normal_update()
 
 
-def mark_round_edges(bm, low_z=None, low_ratio=1.0):
+def flat_areas(bm):
+    """The groups of faces that touch, are in one plane and have the same material index."""
+    limit = math.cos(math.radians(0.1))
+    seen, areas = set(), []
+    for face in bm.faces:
+        if face in seen:
+            continue
+        seen.add(face)
+        area, stack = [], [face]
+        while stack:
+            a = stack.pop()
+            area.append(a)
+            for e in a.edges:
+                for b in e.link_faces:
+                    if b not in seen and b.normal.dot(a.normal) > limit and b.material_index == a.material_index:
+                        seen.add(b)
+                        stack.append(b)
+        areas.append(area)
+    return areas
+
+
+def fill_again(bm, area):
+    """Fill one flat area again: a Delaunay fill (the triangles with the largest smallest angles) that keeps only the
+    border edges of the area. If the new fill does not close on the same border, the area keeps its old fill."""
+    n = area[0].normal.copy()
+    material_index = area[0].material_index
+    u = n.orthogonal().normalized()
+    v = n.cross(u)
+    faces = set(area)
+    verts = list({x for f in area for x in f.verts})
+    index = {x: i for i, x in enumerate(verts)}
+    edges = {e for f in area for e in f.edges}
+    border_edges = [e for e in edges if sum(f in faces for f in e.link_faces) == 1]
+    inner = [e for e in edges if sum(f in faces for f in e.link_faces) == 2]
+    if len(border_edges) + len(inner) != len(edges):
+        return                                      # an edge with more than 2 faces of the area
+    pairs = [(index[e.verts[0]], index[e.verts[1]]) for e in border_edges]
+    _, _, triangles, origin, _, _ = geometry.delaunay_2d_cdt(
+        [Vector((x.co.dot(u), x.co.dot(v))) for x in verts], pairs, [], 0, MERGE, True)
+    if any(len(o) != 1 for o in origin):
+        return                                      # the fill added or merged points
+    border = {(min(a, b), max(a, b)) for a, b in pairs}
+    kept = inside_triangles([[origin[i][0] for i in t] for t in triangles], border)
+    sides = {}
+    for t in kept:
+        for a, b in ((t[0], t[1]), (t[1], t[2]), (t[2], t[0])):
+            sides[min(a, b), max(a, b)] = sides.get((min(a, b), max(a, b)), 0) + 1
+    if {key for key, c in sides.items() if c == 1} != border or max(sides.values(), default=0) > 2:
+        return
+    bmesh.ops.delete(bm, geom=area, context="FACES_ONLY")
+    for t in kept:
+        try:
+            face = bm.faces.new([verts[i] for i in t])
+        except ValueError:
+            continue                                # a face that exists already
+        face.material_index = material_index
+        face.normal_update()
+        if face.normal.dot(n) < 0:
+            face.normal_flip()
+    bmesh.ops.delete(bm, geom=[e for e in inner if e.is_valid and not e.link_faces], context="EDGES")
+
+
+def inside_triangles(triangles, border):
+    """The triangles of a full fill (up to the convex hull) that are inside the border lines. Start at the outer
+    edges (edges of one triangle only): the triangle there is inside if that edge is a border edge. Then go from
+    triangle to triangle: each border edge changes inside to outside, or outside to inside."""
+    sides = {}
+    for t, tri in enumerate(triangles):
+        for a, b in ((tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])):
+            sides.setdefault((min(a, b), max(a, b)), []).append(t)
+    inside, queue = {}, deque()
+    for key, ts in sides.items():
+        if len(ts) == 1 and ts[0] not in inside:
+            inside[ts[0]] = key in border
+            queue.append(ts[0])
+    while queue:
+        t = queue.popleft()
+        tri = triangles[t]
+        for a, b in ((tri[0], tri[1]), (tri[1], tri[2]), (tri[2], tri[0])):
+            key = (min(a, b), max(a, b))
+            for other in sides[key]:
+                if other not in inside:
+                    inside[other] = inside[t] != (key in border)
+                    queue.append(other)
+    return [tri for t, tri in enumerate(triangles) if inside.get(t)]
+
+
+def mark_round_edges(bm, low_z=None, low_ratio=1.0, openings=(), opening_ratio=1.0):
     """Mark the edges to round (bevel weight): the edges sharper than 30° get the weight 1.
     For the encapsulation layer on the tracks, the edges below its flat part (lower than low_z: the grooves and the
     bottom) get the weight low_ratio: a smaller radius, so that the rounded edges fit into the narrow grooves.
+    The edges of the openings (openings = the rings of the holes) get at most the weight opening_ratio: a small
+    radius, so that the wall of an opening stays straight. (With the full radius, the two rounded edges of a thick
+    layer meet in the middle of the wall. Seen through a transparent layer, such a fully round opening shows as a
+    4-pointed star.)
     Do this on the flat layer, before the bend: the parts of a cut edge keep its weight."""
     weight = bm.edges.layers.float.get("bevel_weight_edge") or bm.edges.layers.float.new("bevel_weight_edge")
+    on_opening = on_rings(openings, W * 1e-5) if openings and opening_ratio < 1 else None
     for e in bm.edges:
         if len(e.link_faces) == 2 and e.calc_face_angle(0) > math.radians(30):
             low = low_z is not None and min(v.co.z for v in e.verts) < low_z - MERGE
             e[weight] = low_ratio if low else 1.0
+            if on_opening and all(on_opening(v.co.x, v.co.y) for v in e.verts):
+                e[weight] = min(e[weight], opening_ratio)
+
+
+def on_rings(rings, tolerance):
+    """Return a test f(x, y): True if the point is on one of the rings (closer than `tolerance` to one of its sides).
+    A grid of cells keeps the test fast on a layer with many openings: each point checks only the sides in its cell."""
+    cell = W / 200
+    grid = {}
+    for ring in rings:
+        for (ax, ay), (bx, by) in zip(ring, ring[1:] + ring[:1]):
+            for i in range(math.floor((min(ax, bx) - tolerance) / cell), math.floor((max(ax, bx) + tolerance) / cell) + 1):
+                for j in range(math.floor((min(ay, by) - tolerance) / cell), math.floor((max(ay, by) + tolerance) / cell) + 1):
+                    grid.setdefault((i, j), []).append((ax, ay, bx - ax, by - ay))
+
+    def test(x, y):
+        for ax, ay, dx, dy in grid.get((math.floor(x / cell), math.floor(y / cell)), ()):
+            t = max(0.0, min(1.0, ((x - ax) * dx + (y - ay) * dy) / ((dx * dx + dy * dy) or 1.0)))
+            if math.hypot(x - ax - t * dx, y - ay - t * dy) < tolerance:
+                return True
+        return False
+    return test
 
 
 def cut_for_bend(bm, bend):
@@ -307,6 +436,25 @@ def round_edges(obj, radius):
     bevel.harden_normals = False
 
 
+def rounded_flat(bm, radius):
+    """Round the marked edges of a flat layer (round_edges) and return the result as a new bmesh.
+    Do this before the cut lines of the bend: the cut lines are closer to each other than the radius, and the bevel
+    made turned-over faces and spikes on the thin strips between them (seen on bent layers, also with no openings)."""
+    if radius <= 0:
+        return bm
+    mesh = bpy.data.meshes.new("flat layer")
+    bm.to_mesh(mesh)
+    bm.free()
+    obj = bpy.data.objects.new("flat layer", mesh)
+    bpy.context.scene.collection.objects.link(obj)
+    round_edges(obj, radius)
+    out = bmesh.new()
+    out.from_object(obj, bpy.context.evaluated_depsgraph_get())
+    bpy.data.objects.remove(obj)
+    bpy.data.meshes.remove(mesh)
+    return out
+
+
 # ───────────────────────────────────────────────────────── build ──
 
 def build_device():
@@ -324,13 +472,17 @@ def build_device():
                 add_solid(bm, p["exterior"], p["holes"], o["z0"] - overlap, o["z1"])
         join_flat_faces(bm)
         if o.get("round"):
-            mark_round_edges(bm, o["z0"] if o.get("pieces") else None, o.get("round_low", o["round"]) / o["round"])
+            mark_round_edges(bm, o["z0"] if o.get("pieces") else None, o.get("round_low", o["round"]) / o["round"],
+                             [h for p in o["polygons"] for h in p["holes"]],
+                             o.get("round_openings", o["round"]) / o["round"])
+        bm = rounded_flat(bm, o.get("round", 0))   # the rounded edges first, then the cut lines and the bend
         if "bend" in o:
             cut_for_bend(bm, bend)
             for v in bm.verts:
                 v.co = bend.move(*v.co)
-        made[o["index"]] = finish(o["name"], bm, material(o["name"], o["colour"], o["surface"], o.get("transparency", 0)))
-        round_edges(made[o["index"]], o.get("round", 0))
+        transparency = o.get("transparency", 0)
+        inner = material(o["name"] + " inside", o["colour"], o["surface"], 100) if transparency > 0 else None
+        made[o["index"]] = finish(o["name"], bm, material(o["name"], o["colour"], o["surface"], transparency), inner)
         say("built", name=o["name"])
 
     # Coatings: one disc above each electrode, along the normal of the top face of the top layer.
@@ -431,6 +583,9 @@ def render_settings():
     sc.render.engine = "CYCLES"
     sc.cycles.samples = q["samples"]
     sc.cycles.use_denoising = True
+    # A ray stops after this number of transparent surfaces, and the pixel becomes dark. Through transparent layers
+    # (2 surfaces for each layer, more at the steps along the tracks), the default (8) gave dark lines on the tracks.
+    sc.cycles.transparent_max_bounces = 64
     sc.render.resolution_x, sc.render.resolution_y = q["resolution"]
     sc.render.resolution_percentage = 100
     sc.render.film_transparent = True

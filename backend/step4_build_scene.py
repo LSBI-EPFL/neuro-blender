@@ -45,6 +45,8 @@ LOOK = dict(
     small_electrode_scale=2.0,
     round_edges=0.5,         # radius of the rounded edges (the fillet) = 0.5 x the drawn thickness: a fully round edge
     round_to_width=0.2,      # limit: the radius is at most 0.2 x the width of the narrowest shape of the object
+    round_openings=0.1,      # radius of the edges of the openings = 0.1 x the drawn thickness: the wall stays straight.
+                             # (A fully round wall seen through a transparent layer shows as a 4-pointed star.)
 )
 
 
@@ -472,10 +474,11 @@ def build_scene(device_layers, layers, stack, view, enlarge, cleave_angle, space
         label_inset = [[round(x, decimals), round(y, decimals)] for x, y in inset_points[::step]]
         first = len(objects)
         for m in layer["materials"]:
+            rounded = min(edge_radius(in_view, drawn[id(m)]), radius)
             objects.append(dict(index=len(objects), layer=i, name=f"{layer['name']} - {m['name']}", kind=layer["type"],
                                 z0=z, z1=z + drawn[id(m)], polygons=polygons, label_points=label_points,
-                                label_inset=label_inset,
-                                round=min(edge_radius(in_view, drawn[id(m)]), radius)))
+                                label_inset=label_inset, round=rounded,
+                                round_openings=min(rounded, LOOK["round_openings"] * drawn[id(m)])))
             z += drawn[id(m)]
         if layer["type"] == "tracks":
             tracks_z0 = objects[first]["z0"] if tracks_z0 is None else tracks_z0
@@ -633,6 +636,12 @@ def whole_number_check(lowest, highest):
 
 
 GUIDE_CHOICES = ("none", "some", "all")
+BACKGROUNDS = {"white": "White", "transparent": "Transparent"}   # the background of the final image (step 5)
+# The result files that the user can keep, in addition to the final image and the answers (always kept). At the end
+# of the run, flow.remove_unkept() deletes the files of the kinds that are not ticked.
+KEEP_FILES = {"render": "Render with no labels (5_render.png)",
+              "blender": "Blender scene (5_render.blend)",
+              "steps": "Images and files of the steps (1_ to 5_)"}
 SOME_GUIDES = 6          # "some" = the dashed lines of 6 electrodes, spread over the device
 
 
@@ -801,7 +810,7 @@ def run(device_layers, layers, stack, project_folder, projects_folder):
     turn, height = (int(v) for v in angles.split(","))
     scene["camera"] = dict(turn=turn, height=height)
 
-    # Two options for the image: the dashed guide lines (only with a coating) and the labels.
+    # Three options for the image: the dashed guide lines (only with a coating), the labels and the background.
     if scene["coatings"] and scene["guides"]["centres"]:
         guides = answer(stack, "render guide lines", lambda: ask_guides(scene), is_valid=lambda v: v in GUIDE_CHOICES)
         scene["guides"]["centres"] = guide_centres(scene["guides"]["centres"], guides)
@@ -809,6 +818,17 @@ def run(device_layers, layers, stack, project_folder, projects_folder):
         "Show labels?", "Labels give name and real thickness of each layer. No = image with no text.",
         default="n" if answers.PREVIOUS.get("render labels") == "no" else "y"),
         is_valid=lambda v: v in ("yes", "no"))
+    scene["background"] = answer(stack, "render background", lambda: ui.ask_choice(
+        "Background?", "", BACKGROUNDS, default=answers.PREVIOUS.get("render background", "white"),
+        details={"white": "White image background.",
+                 "transparent": "No background (PNG). For slides with a coloured background."}),
+        is_valid=lambda v: v in BACKGROUNDS)
+    # The result files to keep at the end of the run (KEEP_FILES). Saved as an answer: "render again" does not ask.
+    old_keep = answers.split_layers(answers.PREVIOUS.get("render keep files", ", ".join(KEEP_FILES)))
+    answer(stack, "render keep files", lambda: ", ".join(ui.ask_ticks(
+        "Which files do you want to keep?", "Final image and answers are always kept. No tick = final image only.",
+        KEEP_FILES, ticked=[k for k in old_keep if k in KEEP_FILES])) or "none",
+        is_valid=lambda v: v == "none" or all(k in KEEP_FILES for k in answers.split_layers(v)))
 
     # The quality is not saved in the stack: you select it again at each run.
     scene["quality"] = ui.ask_choice(

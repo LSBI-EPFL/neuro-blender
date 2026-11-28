@@ -121,6 +121,26 @@ def form_do(method, *args):
     return lambda app: getattr(app.form, method)(*args)
 
 
+class DropEvent:
+    """The event of a file dropped on the window (tkinterdnd2 puts a path with spaces in braces)."""
+    def __init__(self, path):
+        self.data, self.action = "{" + path + "}", "copy"
+
+
+def drop(path):
+    """Drop a file on the window."""
+    return lambda app: app.dropped(DropEvent(path))
+
+
+def answer_can_drop(app):
+    """Answer the open text question with "yes" if the window takes dropped files."""
+    type_text("yes" if app.can_drop else "no")(app)
+    app.next()
+
+
+MASK_FILES = {"probe.dxf": "probe.dxf", "window": "Find the file in a window ..."}
+
+
 def messages_with_table():
     """Many lines of messages with a table in the middle, then a question (the back end side)."""
     for n in range(30):
@@ -165,7 +185,34 @@ TESTS = [
       form_value("materials", "Au 200 nm"), lambda app: app.form.colours[1].update(Au="#e3b04b"), press("Next")],
      [PI, {"name": "Tracks", "type": "tracks", "shape": "METAL", "materials": "Au 200 nm", "colours": "#e3b04b",
            "surface": "shiny"}]),
+    ("stack form: a colour picked in a lower layer is the default colour of the same material in a new layer",
+     lambda: stack_form(PI, TRACKS),
+     [lambda app: app.form.colours[1].update(Au="#123456"), form_do("add_layer"), form_value("name", "Coating"),
+      form_value("type", "electrode coating"), form_value("shape", "METAL"), form_value("materials", "Au 200 nm"),
+      press("Next"), press("Back")],                    # (Back only if Next is refused: then the test fails, no wait)
+     [PI, dict(TRACKS, colours="#8c857b, #123456"),
+      {"name": "Coating", "type": "electrode coating", "shape": "METAL", "materials": "Au 200 nm",
+       "colours": "#123456", "surface": "shiny"}]),
     ("stack form: Back goes back", lambda: stack_form(PI, TRACKS), [press("Back")], "GoBack"),
+    ("drop: the window takes dropped files (package tkinterdnd2)", lambda: ui.ask("Drop?", "", ""),
+     [answer_can_drop], "yes"),
+    ("drop: a dropped mask file is the answer (its full path)",
+     lambda: ui.ask_file("Which mask file?", "", MASK_FILES, endings=(".dxf", ".gds")),
+     [drop("C:/My Designs/implant.dxf"), press("Next")], os.path.abspath("C:/My Designs/implant.dxf")),
+    ("drop: a file of another type is refused; then a choice in the list",
+     lambda: ui.ask_file("Which mask file?", "", MASK_FILES, endings=(".dxf", ".gds")),
+     [drop("C:/photo.png"), press("Down", "Next")], "window"),
+    ("drop box: a click on the box is the choice that opens the file window",
+     lambda: ui.ask_file("Which mask file?", "", MASK_FILES, endings=(".dxf", ".gds"), browse="window"),
+     [lambda app: app.drop_box.click()], "window"),
+    ("drop box: the list does not show the choice of the file window",
+     lambda: ui.ask_file("Which mask file?", "", MASK_FILES, endings=(".dxf", ".gds"), browse="window"),
+     [press("Down", "Next")], "probe.dxf"),
+    ("drop box: a file dropped on the box is the answer",
+     lambda: ui.ask_file("Which mask file?", "", MASK_FILES, endings=(".dxf", ".gds"), browse="window"),
+     [drop("C:/implant.dxf")], os.path.abspath("C:/implant.dxf")),
+    ("drop: a question that takes no file refuses a dropped file", lambda: ui.ask("Name?", "", "Top PI"),
+     [drop("C:/implant.dxf"), press("Next")], "Top PI"),
     ("page form: a number out of range is refused; a good number, then Next", lambda: page_form(),
      [page_value("render cleave angle", "60"), press("Next"), page_value("render cleave angle", "12"), press("Next")],
      {"render view": "electrodes", "render cleave angle": "12", "render space between layers": "0"}),

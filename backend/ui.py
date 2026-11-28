@@ -9,7 +9,7 @@ main.py selects the front end with use().
 
 A front end gives these functions:
   display:    header, section, note, warn, success, show_path, show_table, stack_drawing, working, progress
-  questions:  ask_text, ask_choice, ask_yes_no, ask_ticks, ask_colour, pick_file
+  questions:  ask_text, ask_choice, ask_file, ask_yes_no, ask_ticks, ask_colour, pick_file
 The other questions of this file (ask, ask_number, ask_layer, ask_layers, ask_materials) use these functions, so
 that both front ends check the answers in the same way.
 
@@ -131,6 +131,22 @@ def ask_choice(question, help_text, options, default=None, details=None, side=No
     """Select one option. options = {value: text}. details = {value: help text of the option}.
     side = {value: a short grey text next to the option}. Return the value."""
     return _front.ask_choice(question, help_text, options, default, details or {}, side or {})
+
+
+def ask_file(question, help_text, options, default=None, details=None, endings=(), browse=None):
+    """Select one option, or (window) drop a file on the window. endings = the file endings that a dropped file can
+    have (example: (".dxf", ".gds")). browse = the option that opens the file window: the window shows it as a drop
+    box ("Drop the file here, or click to select it") above the list, and not in the list.
+    Return the value of the option, or the full path of the dropped file."""
+    return _front.ask_file(question, help_text, options, default, details or {}, tuple(endings), browse)
+
+
+def ask_ticks(question, help_text, options, ticked=(), check=None):
+    """Tick zero or more options. options = {value: text}. ticked = the values ticked at the start.
+    check(selected values) returns an error text, or None (no check: all answers are good, also no tick).
+    Return the ticked values, in the order of the options."""
+    return _front.ask_ticks(question, help_text, list(options.items()), list(ticked), check or (lambda selected: None),
+                            {})
 
 
 def ask_yes_no(question, help_text="", default="y"):

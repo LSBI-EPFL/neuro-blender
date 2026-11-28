@@ -106,6 +106,42 @@ def read_colour(text):
     return (to_hex(name), transparency) if name and is_color_like(name) else None
 
 
+# ───────────────────────────────────────────────────────── the colour of each material ──
+# The last colour of each material, for all designs: material_colours.yaml in the projects folder. A material with
+# no colour in this stack gets its last colour as the default answer (example: Pt is grey in each new design).
+
+COLOURS_FILE = "material_colours.yaml"
+
+
+def remembered_colours(projects_folder):
+    """{material: colour} from the colours file of the projects folder. A missing or bad file gives {}."""
+    import yaml
+    try:
+        with open(os.path.join(projects_folder, COLOURS_FILE), encoding="utf8") as f:
+            data = yaml.safe_load(f) or {}
+    except (OSError, yaml.YAMLError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(name): str(colour) for name, colour in data.items() if read_colour(str(colour))}
+
+
+def remember_colours(projects_folder, layers):
+    """Keep the colour of each material of the stack in the colours file (the last colour wins). layers = the
+    layers of step 3, each with materials [{name, colour, transparency}]. The write is atomic, as in write_stack."""
+    import yaml
+    colours = remembered_colours(projects_folder)
+    for layer in layers:
+        for m in layer["materials"]:
+            colours[m["name"]] = join_colour(m["colour"], m["transparency"])
+    os.makedirs(projects_folder, exist_ok=True)
+    path = os.path.join(projects_folder, COLOURS_FILE)
+    with open(path + ".tmp", "w", encoding="utf8") as f:
+        f.write("# Neuro Blender: the last colour of each material. It is the default colour in new designs.\n")
+        yaml.safe_dump(dict(sorted(colours.items())), f, allow_unicode=True)
+    os.replace(path + ".tmp", path)
+
+
 # ───────────────────────────────────────────────────────── stack file ──
 #
 # The stack file (stack.yaml) has 3 parts:
@@ -139,17 +175,20 @@ CONVERSIONS = {1: convert_1_to_2}     # {old format: function that changes it to
 LIST_KEYS = ["through holes"]               # design answers that are lists of mask layers
 MAP_KEYS = ["layer names"]                  # design answers that are tables (GDS layer number -> name)
 # The render answers: {key in the program: (name in stack.yaml, kind)}. Kind: "text", "yes/no" (true / false in
-# the file), "number", or "list" (a list of mask layers). A new render answer needs only one line here.
+# the file), "number", or "list" (a list of names: mask layers, file kinds). A new render answer needs only one line
+# here.
 # (The camera is different: two numbers, saved as "camera: {turn, height}".)
 RENDER = {
     "render view": ("view", "text"),
     "render small electrodes larger": ("small electrodes larger", "yes/no"),
     "render guide lines": ("guide lines", "text"),
     "render labels": ("labels", "yes/no"),
+    "render background": ("background", "text"),
     "render cleave angle": ("cleave angle", "number"),
     "render space between layers": ("space between layers", "number"),
     "render coating distance": ("coating distance", "number"),
     "render electrode openings": ("electrode openings", "list"),
+    "render keep files": ("keep files", "list"),
 }
 
 

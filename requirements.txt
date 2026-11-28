@@ -8,3 +8,4 @@ pyyaml>=6.0       # reads and writes the answers file (stack.yaml)
 rich>=13.0        # the terminal display: colours, panels, tables, progress bars
 questionary>=2.0  # the questions: arrow-key menus, checkboxes, input checks
 pillow>=10.0      # shows the images in the window
+tkinterdnd2>=0.4.3  # drop a mask file on the window

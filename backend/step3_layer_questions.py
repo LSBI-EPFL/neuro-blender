@@ -32,6 +32,7 @@ TYPES = {
     "electrode coating": "Material on electrodes only. Floats above electrodes in image.",
 }
 SURFACES = {"shiny": "Shines like metal.", "matte": "No shine."}
+REMEMBERED = {}            # {material: colour}: the last colours of all designs (run() reads them from the file)
 
 
 def layer_questions(number, below, layer_names, counts, outline_layer, earlier_colours, above_tracks=False,
@@ -44,10 +45,11 @@ def layer_questions(number, below, layer_names, counts, outline_layer, earlier_c
     old = old if old is not None else answers.PREVIOUS
     before = lambda question, fallback=None: old.get(f"{key} {question}", fallback)
     encapsulation = lambda values: values.get(f"{key} type") == "encapsulation"
-    # Colours: the old colour of a material of this layer, else the colour of the material in a layer below.
+    # Colours: the old colour of a material of this layer, else the colour of the material in a layer below, else
+    # the last colour of the material in any design (REMEMBERED).
     old_names = [m for m, _ in parse_materials(before("materials", "")) or []]
     old_colours = dict(zip(old_names, [c.strip() for c in before("colours", "").split(",")]))
-    colours = {**earlier_colours, **{name: colour for name, colour in old_colours.items() if colour}}
+    colours = {**REMEMBERED, **earlier_colours, **{name: colour for name, colour in old_colours.items() if colour}}
     return [
         Question(f"{key} name", "text", "Name?", "shows on image", default=before("name"), label="Name"),
         Question(f"{key} type", "choice", "Type?", options={t: t for t in TYPES}, details=TYPES,
@@ -210,9 +212,13 @@ def run(device_layers, stack, project_folder):
     names = list(device_layers)
     counts = {name: len(shapes["closed"]) for name, shapes in device_layers.items()}
     outline = stack.get("outline layer")
+    projects_folder = os.path.dirname(project_folder)     # the colours file is the same for all designs
+    REMEMBERED.clear()
+    REMEMBERED.update(answers.remembered_colours(projects_folder))
 
     if ui.shows_forms():                                  # the window: all the layers in one form
         layers = edit_in_form(stack, names, counts, outline)
+        answers.remember_colours(projects_folder, layers)
         ui.stack_drawing(layers)
         save_stack_image(layers, os.path.join(project_folder, "4_stack.png"))
         ui.show_path("Stack image:", os.path.join(project_folder, "4_stack.png"))
@@ -250,6 +256,7 @@ def run(device_layers, stack, project_folder):
             continue
         number += 1
 
+    answers.remember_colours(projects_folder, layers)
     if not shown_once:                                    # all answers were saved: show the stack one time
         ui.stack_drawing(layers)
     save_stack_image(layers, os.path.join(project_folder, "4_stack.png"))
