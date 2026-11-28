@@ -260,7 +260,9 @@ Rules for the stack:
 10. Tick the files to keep: the render with no labels (`5_render.png`), the Blender scene (`5_render.blend`), and the
     images and files of the steps (`1_` to `5_`). The final image and the answers are always kept. No tick = the
     final image only. At the end of the run, the tool deletes the result files that you did not tick.
-11. Select the image quality: `preview` (1280 × 720 pixels) or `final` (2560 × 1440 pixels).
+11. Select the image quality: `preview` (1280 × 720 pixels), `final` (2560 × 1440 pixels) or `large`
+    (7680 × 4320 pixels). In `large`, each track has 3 times more pixels than in `final`, so thin tracks that are
+    close together stay sharp when you zoom in. The render takes about 9 times longer than `final`.
 
 How the tool draws the layers:
 - The encapsulation layer directly on the tracks fills the space around the tracks, down to the layer under the

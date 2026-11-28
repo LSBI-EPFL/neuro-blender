@@ -45,7 +45,8 @@ INNER = 1                                         # material index of the inner 
 LENS = 70                                         # camera lens (mm): a longer lens = a flatter view
 QUALITY = {"views": dict(resolution=(640, 360), samples=16),        # the small test images of the views
            "preview": dict(resolution=(1280, 720), samples=32),
-           "final": dict(resolution=(2560, 1440), samples=256)}
+           "final": dict(resolution=(2560, 1440), samples=256),
+           "large": dict(resolution=(7680, 4320), samples=256)}   # 3 x more pixels on each track than "final"
 
 
 def say(event, **values):

@@ -2,7 +2,7 @@
 Step 4: prepare the 3D scene and render it with Blender.
 
   1. Ask which part of the device to show (the electrodes, or the whole device), the cleave angle, the space
-     between the layers, the view, and the image quality (a quick preview, or the final image).
+     between the layers, the view, and the image quality (a quick preview, the final image, or a large image).
   2. Turn the device so that its long side is along y and the electrodes are at the far end (+y).
   3. Make the 2D shape of each layer: its DXF shape, minus its openings.
   4. Calculate the drawn thickness of each layer, and how the cleaved layers bend.
@@ -832,9 +832,11 @@ def run(device_layers, layers, stack, project_folder, projects_folder):
 
     # The quality is not saved in the stack: you select it again at each run.
     scene["quality"] = ui.ask_choice(
-        "Image quality?", "", {"preview": "Preview", "final": "Final"}, default="preview",
+        "Image quality?", "", {"preview": "Preview", "final": "Final", "large": "Large"}, default="preview",
         details={"preview": "Small image (1280 x 720). About 1 min. Good for a check.",
-                 "final": "Large image (2560 x 1440). About 1 min with graphics card, up to 20 min without."})
+                 "final": "Image for slides (2560 x 1440). About 1 min with graphics card, up to 20 min without.",
+                 "large": "Very large image (7680 x 4320): thin, close tracks stay sharp when you zoom in. "
+                          "About 10 min with graphics card, up to 3 hours without."})
 
     scene_file = os.path.join(project_folder, "5_scene.json")
     with open(scene_file, "w", encoding="utf8") as f:
